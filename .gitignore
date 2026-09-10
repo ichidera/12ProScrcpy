@@ -51,6 +51,7 @@ local.properties
 /output
 
 # End of consolidated .gitignore
+.vs/
 12PROSCRCPY.zip
 /QtScrcpy/screenshot
 /QtScrcpy/docs
