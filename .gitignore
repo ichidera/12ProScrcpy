@@ -61,3 +61,28 @@ local.properties
 /QtScrcpy/QtScrcpy/res
 /Scrcpy/gradle
 /Scrcpy/release
+
+# Source: QtScrcpy/QtScrcpyCore/.gitignore
+# Qt build artifacts
+*_plugin_import.cpp
+/.qmake.cache
+/.qmake.stash
+*.pro.user.*
+*.qbs.user
+*.qbs.user.*
+*.moc
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+*.qmlc
+*.jsc
+Makefile*
+*.prl
+target_wrapper.*
+*.autosave
+*.qmlproject.user
+*.qmlproject.user.*
+CMakeLists.txt.user*
+compile_commands.json
+*creator.user*
