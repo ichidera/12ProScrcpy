@@ -60,3 +60,4 @@ local.properties
 /Scrcpy/.github
 /QtScrcpy/QtScrcpy/res
 /Scrcpy/gradle
+/Scrcpy/release
