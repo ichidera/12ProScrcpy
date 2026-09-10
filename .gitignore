@@ -93,3 +93,5 @@ compile_commands.json
 # Extras
 Adbmirror.zip
 QtScrcpy/
+keymap/
+docs/

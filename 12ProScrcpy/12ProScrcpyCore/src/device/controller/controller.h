@@ -36,6 +36,14 @@ public:
     // touch/click path now - see docs/real-device-adb-sendevent.md.
     void sendRealTouch(int slot, AndroidMotioneventAction action, QPoint framePos, const QSize &frameSize);
 
+    // Framework-level fallback (root `input keyevent`) for hardware-button
+    // keycodes with no confirmed kernel node on this device — see
+    // docs/real-device-adb-sendevent.md. postGoHome/postGoBack/postGoMenu/
+    // postPower/postVolumeUp/postVolumeDown use the raw sendevent hardware
+    // nodes directly instead; this is only used by postKeyCodeClick for the
+    // remaining keys (AppSwitch, Copy, Cut).
+    void sendRealKeyEvent(int androidKeycode);
+
     void updateScript(QString gameScript = "");
     bool isCurrentCustomKeymap();
 

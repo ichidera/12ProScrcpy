@@ -95,37 +95,56 @@ void Controller::postBackOrScreenOn(bool down)
 
 void Controller::postGoHome()
 {
-    postKeyCodeClick(AKEYCODE_HOME);
+    ensureRealTouchSession();
+    if (m_realTouchSession && m_realTouchSession->isRunning()) {
+        m_realTouchSession->pressHome();
+    }
 }
 
 void Controller::postGoMenu()
 {
-    postKeyCodeClick(AKEYCODE_MENU);
+    ensureRealTouchSession();
+    if (m_realTouchSession && m_realTouchSession->isRunning()) {
+        m_realTouchSession->pressMenu();
+    }
 }
 
 void Controller::postGoBack()
 {
-    postKeyCodeClick(AKEYCODE_BACK);
+    ensureRealTouchSession();
+    if (m_realTouchSession && m_realTouchSession->isRunning()) {
+        m_realTouchSession->pressBack();
+    }
 }
 
 void Controller::postAppSwitch()
 {
+    // no confirmed hardware node for AppSwitch on this device - framework fallback
     postKeyCodeClick(AKEYCODE_APP_SWITCH);
 }
 
 void Controller::postPower()
 {
-    postKeyCodeClick(AKEYCODE_POWER);
+    ensureRealTouchSession();
+    if (m_realTouchSession && m_realTouchSession->isRunning()) {
+        m_realTouchSession->pressPower();
+    }
 }
 
 void Controller::postVolumeUp()
 {
-    postKeyCodeClick(AKEYCODE_VOLUME_UP);
+    ensureRealTouchSession();
+    if (m_realTouchSession && m_realTouchSession->isRunning()) {
+        m_realTouchSession->pressVolumeUp();
+    }
 }
 
 void Controller::postVolumeDown()
 {
-    postKeyCodeClick(AKEYCODE_VOLUME_DOWN);
+    ensureRealTouchSession();
+    if (m_realTouchSession && m_realTouchSession->isRunning()) {
+        m_realTouchSession->pressVolumeDown();
+    }
 }
 
 void Controller::copy()
@@ -383,17 +402,15 @@ bool Controller::sendControl(const QByteArray &buffer)
 
 void Controller::postKeyCodeClick(AndroidKeycode keycode)
 {
-    ControlMsg *controlEventDown = new ControlMsg(ControlMsg::CMT_INJECT_KEYCODE);
-    if (!controlEventDown) {
-        return;
-    }
-    controlEventDown->setInjectKeycodeMsgData(AKEY_EVENT_ACTION_DOWN, keycode, 0, AMETA_NONE);
-    postControlMsg(controlEventDown);
+    sendRealKeyEvent(static_cast<int>(keycode));
+}
 
-    ControlMsg *controlEventUp = new ControlMsg(ControlMsg::CMT_INJECT_KEYCODE);
-    if (!controlEventUp) {
+void Controller::sendRealKeyEvent(int androidKeycode)
+{
+    ensureRealTouchSession();
+    if (!m_realTouchSession || !m_realTouchSession->isRunning()) {
+        qWarning() << "Controller::sendRealKeyEvent: sendevent session not running, dropping key event";
         return;
     }
-    controlEventUp->setInjectKeycodeMsgData(AKEY_EVENT_ACTION_UP, keycode, 0, AMETA_NONE);
-    postControlMsg(controlEventUp);
+    m_realTouchSession->pressKeyEvent(androidKeycode);
 }
