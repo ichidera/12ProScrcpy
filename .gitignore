@@ -63,7 +63,7 @@ local.properties
 /Scrcpy/gradle
 /Scrcpy/release
 /QtScrcpy/QtScrcpy/QtScrcpyCore/src/third_party
-Scrcpy
+Scrcpy/
 
 # Source: QtScrcpy/QtScrcpyCore/.gitignore
 # Qt build artifacts
@@ -92,3 +92,4 @@ compile_commands.json
 
 # Extras
 Adbmirror.zip
+QtScrcpy/
