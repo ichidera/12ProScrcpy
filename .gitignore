@@ -62,7 +62,7 @@ local.properties
 /QtScrcpy/QtScrcpy/res
 /Scrcpy/gradle
 /Scrcpy/release
-/QtScrcpy/QtScrcpyCore/src/third_party
+/QtScrcpy/QtScrcpy/QtScrcpyCore/src/third_party
 Scrcpy
 
 # Source: QtScrcpy/QtScrcpyCore/.gitignore
