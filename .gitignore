@@ -58,3 +58,5 @@ local.properties
 /Scrcpy/assets
 /Scrcpy/config
 /Scrcpy/.github
+/QtScrcpy/QtScrcpy/res
+/Scrcpy/gradle
