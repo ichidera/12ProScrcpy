@@ -1,97 +1,28 @@
-# Consolidated root .gitignore
-# This file was generated to ensure patterns from subfolder .gitignore files
-# are acknowledged from the repository root.
-#
-# Source: QtScrcpy/.gitignore
-/output
-*.user
-/QtScrcpy/*.user
-/server/.gradle
-/server/.idea
-/server/build
-/server/gradle/wrapper/gradle-wrapper.jar
-/server/gradle/wrapper/gradle-wrapper.properties
-/server/gradlew
-/server/gradlew.bat
-/server/local.properties
-/build/
-build-*
-*.DS_Store
-userdata.ini
-Info_Mac.plist
-/ci/build_temp
+# Ignore vendored upstream source trees
+QtScrcpy/
+Scrcpy/
+qtscrcpy/
+scrcpy/
 
-# Source: Scrcpy/.gitignore
+# Ignore common local build artifacts
 build/
 /dist/
-/build-*
-/build_*
-/release-*/
+/output/
+build-*
+*.user
+*.DS_Store
+*.iml
 .idea/
 .gradle/
-/x/
-local.properties
-/scrcpy-server
-
-# Source: Scrcpy/server/.gitignore
-*.iml
-.gradle
-/local.properties
-/.idea/
-.DS_Store
-/build
-/captures
-.externalNativeBuild
-
-# Source: Scrcpy/app/deps/.gitignore
-/work
-
-# Source: Scrcpy/release/.gitignore
-/work
-/output
-
-# End of consolidated .gitignore
 .vs/
-12PROSCRCPY.zip
-/QtScrcpy/screenshot
-/QtScrcpy/docs
-/QtScrcpy/.github
-/Scrcpy/assets
-/Scrcpy/config
-/Scrcpy/.github
-/QtScrcpy/QtScrcpy/res
-/Scrcpy/gradle
-/Scrcpy/release
-/QtScrcpy/QtScrcpy/QtScrcpyCore/src/third_party
-Scrcpy/
-
-# Source: QtScrcpy/QtScrcpyCore/.gitignore
-# Qt build artifacts
-*_plugin_import.cpp
-/.qmake.cache
-/.qmake.stash
-*.pro.user.*
-*.qbs.user
-*.qbs.user.*
-*.moc
-moc_*.cpp
-moc_*.h
-qrc_*.cpp
-ui_*.h
-*.qmlc
-*.jsc
-Makefile*
-*.prl
-target_wrapper.*
-*.autosave
-*.qmlproject.user
-*.qmlproject.user.*
-CMakeLists.txt.user*
-compile_commands.json
-*creator.user*
-
-# Extras
+local.properties
+userdata.ini
+Info_Mac.plist
 Adbmirror.zip
+<<<<<<< Updated upstream
 QtScrcpy/
 keymap/
 docs/
+=======
+12PROSCRCPY.zip
+>>>>>>> Stashed changes
