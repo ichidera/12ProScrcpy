@@ -11,7 +11,7 @@
 
 
 #include "adbprocess.h"
-#include "../QtScrcpyCore/include/QtScrcpyCore.h"
+#include "../12ProScrcpyCore/include/QtScrcpyCore.h"
 #include "audio/audiooutput.h"
 #include "presetconfigdialog.h"
 
