@@ -44,19 +44,11 @@ void InputConvertNormal::mouseEvent(const QMouseEvent *from, const QSize &frameS
     pos.setX(pos.x() * frameSize.width() / showSize.width());
     pos.setY(pos.y() * frameSize.height() / showSize.height());
 
-    // set data
-    ControlMsg *controlMsg = new ControlMsg(ControlMsg::CMT_INJECT_TOUCH);
-    if (!controlMsg) {
-        return;
+    // Inject the touch directly via `adb shell sendevent` (real kernel input
+    // node), instead of the old control-socket CMT_INJECT_TOUCH message.
+    if (m_controller) {
+        m_controller->sendRealTouch(Controller::kMouseTouchSlot, action, pos.toPoint(), frameSize);
     }
-    controlMsg->setInjectTouchMsgData(
-        static_cast<quint64>(POINTER_ID_GENERIC_FINGER),
-        action,
-        convertMouseButton(from->button()),
-        convertMouseButtons(from->buttons()),
-        QRect(pos.toPoint(), frameSize),
-        AMOTION_EVENT_ACTION_DOWN == action ? 1.0f : 0.0f);
-    sendControlMsg(controlMsg);
 }
 
 void InputConvertNormal::wheelEvent(const QWheelEvent *from, const QSize &frameSize, const QSize &showSize)
@@ -156,31 +148,6 @@ AndroidMotioneventButtons InputConvertNormal::convertMouseButtons(Qt::MouseButto
         buttons |= AMOTION_EVENT_BUTTON_FORWARD;
     }
     return static_cast<AndroidMotioneventButtons>(buttons);
-}
-
-AndroidMotioneventButtons InputConvertNormal::convertMouseButton(Qt::MouseButton button)
-{
-    if (button == Qt::LeftButton) {
-        return AMOTION_EVENT_BUTTON_PRIMARY;
-    }
-    if (button == Qt::RightButton) {
-        return AMOTION_EVENT_BUTTON_SECONDARY;
-    }
-#if (QT_VERSION >= QT_VERSION_CHECK(5, 15, 0))
-    if (button == Qt::MiddleButton) {
-#else
-    if (button == Qt::MidButton) {
-#endif
-        return AMOTION_EVENT_BUTTON_TERTIARY;
-    }
-    if (button == Qt::XButton1) {
-        return AMOTION_EVENT_BUTTON_BACK;
-    }
-    if (button == Qt::XButton2) {
-        return AMOTION_EVENT_BUTTON_FORWARD;
-    }
-
-    return static_cast<AndroidMotioneventButtons>(0);
 }
 
 AndroidKeycode InputConvertNormal::convertKeyCode(int key, Qt::KeyboardModifiers modifiers)

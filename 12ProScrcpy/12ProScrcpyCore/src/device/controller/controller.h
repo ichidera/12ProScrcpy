@@ -6,6 +6,7 @@
 #include <QPointer>
 #include <QSize>
 
+#include "adbsendeventsession.h"
 #include "inputconvertbase.h"
 
 class QTcpSocket;
@@ -16,13 +17,24 @@ class Controller : public QObject
 {
     Q_OBJECT
 public:
-    Controller(std::function<qint64(const QByteArray&)> sendData, QString gameScript = "", QObject *parent = Q_NULLPTR);
+    // Reserved touch slot for the plain-mouse / non-custom-keymap input path.
+    // Custom game keymaps use slots 0..(MULTI_TOUCH_MAX_NUM-1) for their own
+    // synthetic multi-touch contacts, so this must stay outside that range -
+    // see inputconvertgame.h.
+    static constexpr int kMouseTouchSlot = 9;
+
+    Controller(std::function<qint64(const QByteArray&)> sendData, const QString &serial, QString gameScript = "", QObject *parent = Q_NULLPTR);
     virtual ~Controller();
 
     void postControlMsg(ControlMsg *controlMsg);
     void setCameraMode(bool cameraMode);
     void recvDeviceMsg(DeviceMsg *deviceMsg);
-    void test(QRect rc);
+
+    // Real-device touch injection via `adb shell sendevent`, writing directly
+    // into the touchscreen's kernel input node instead of scrcpy's
+    // control-socket MotionEvent protocol. This is the default (and only)
+    // touch/click path now - see docs/real-device-adb-sendevent.md.
+    void sendRealTouch(int slot, AndroidMotioneventAction action, QPoint framePos, const QSize &frameSize);
 
     void updateScript(QString gameScript = "");
     bool isCurrentCustomKeymap();
@@ -72,6 +84,7 @@ private:
     bool sendControl(const QByteArray &buffer);
     void postKeyCodeClick(AndroidKeycode keycode);
     void sendPendingResize();
+    void ensureRealTouchSession();
 
 private:
     QPointer<Receiver> m_receiver;
@@ -80,6 +93,8 @@ private:
     QSize m_pendingResize;
     bool m_resizeQueued = false;
     bool m_cameraMode = false;
+    QString m_serial;
+    QPointer<AdbSendEventSession> m_realTouchSession;
 };
 
 #endif // CONTROLLER_H

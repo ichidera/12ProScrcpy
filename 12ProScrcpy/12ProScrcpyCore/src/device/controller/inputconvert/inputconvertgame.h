@@ -7,7 +7,11 @@
 #include "inputconvertnormal.h"
 #include "keymap.h"
 
-#define MULTI_TOUCH_MAX_NUM 10
+// Real-device sendevent injection has only 10 hardware multitouch slots
+// (0-9). Slot Controller::kMouseTouchSlot (9) is reserved for the plain
+// mouse / fallback InputConvertNormal path, so custom keymaps get slots
+// 0..8 (9 simultaneous synthetic touches) here.
+#define MULTI_TOUCH_MAX_NUM 9
 class InputConvertGame : public InputConvertNormal
 {
     Q_OBJECT

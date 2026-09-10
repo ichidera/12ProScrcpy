@@ -18,13 +18,6 @@
 #define CONTROL_MSG_CLIPBOARD_TEXT_MAX_LENGTH \
     (CONTROL_MSG_MAX_SIZE - 14)
 
-#define POINTER_ID_MOUSE static_cast<quint64>(-1)
-#define POINTER_ID_GENERIC_FINGER static_cast<quint64>(-2)
-
-// Used for injecting an additional virtual pointer for pinch-to-zoom
-#define POINTER_ID_VIRTUAL_MOUSE static_cast<quint64>(-3)
-#define POINTER_ID_VIRTUAL_FINGER static_cast<quint64>(-4)
-
 // ControlMsg
 class ControlMsg : public QScrcpyEvent
 {
@@ -34,6 +27,13 @@ public:
         CMT_NULL = -1,
         CMT_INJECT_KEYCODE = 0,
         CMT_INJECT_TEXT,
+        // CMT_INJECT_TOUCH: kept only to preserve the wire-protocol ordinal
+        // for every value after it (scrcpy-server on the device expects
+        // these numeric IDs). No client code constructs this message
+        // anymore - all touch/click input now goes through
+        // Controller::sendRealTouch() -> AdbSendEventSession, writing
+        // directly to the device's /dev/input node. See
+        // docs/real-device-adb-sendevent.md.
         CMT_INJECT_TOUCH,
         CMT_INJECT_SCROLL,
         CMT_BACK_OR_SCREEN_ON,
@@ -65,16 +65,6 @@ public:
 
     void setInjectKeycodeMsgData(AndroidKeyeventAction action, AndroidKeycode keycode, quint32 repeat, AndroidMetastate metastate);
     void setInjectTextMsgData(QString &text);
-    // id 代表一个触摸点，最多支持10个触摸点[0,9]
-    // action 只能是AMOTION_EVENT_ACTION_DOWN，AMOTION_EVENT_ACTION_UP，AMOTION_EVENT_ACTION_MOVE
-    // position action动作对应的位置
-    void setInjectTouchMsgData(
-        quint64 id,
-        AndroidMotioneventAction action,
-        AndroidMotioneventButtons actionButtons,
-        AndroidMotioneventButtons buttons,
-        QRect position,
-        float pressure);
     void setInjectScrollMsgData(QRect position, float hScroll, float vScroll, AndroidMotioneventButtons buttons);
     void setGetClipboardMsgData(ControlMsg::GetClipboardCopyKey copyKey); 
     void setSetClipboardMsgData(QString &text, bool paste);
@@ -90,7 +80,6 @@ public:
 
 private:
     void writePosition(QBuffer &buffer, const QRect &value);
-    quint16 flostToU16fp(float f);
     qint16 flostToI16fp(float f);
 
 private:
@@ -110,15 +99,6 @@ private:
             {
                 char *text = Q_NULLPTR;
             } injectText;
-            struct
-            {
-                quint64 id;
-                AndroidMotioneventAction action;
-                AndroidMotioneventButtons actionButtons;
-                AndroidMotioneventButtons buttons;
-                QRect position;
-                float pressure;
-            } injectTouch;
             struct
             {
                 QRect position;

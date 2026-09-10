@@ -1,6 +1,8 @@
 #include <QApplication>
 #include <QClipboard>
+#include <QDebug>
 #include <QTimer>
+#include <QtMath>
 
 #include "controller.h"
 #include "controlmsg.h"
@@ -8,9 +10,10 @@
 #include "receiver.h"
 #include "videosocket.h"
 
-Controller::Controller(std::function<qint64(const QByteArray&)> sendData, QString gameScript, QObject *parent)
+Controller::Controller(std::function<qint64(const QByteArray&)> sendData, const QString &serial, QString gameScript, QObject *parent)
     : QObject(parent)
     , m_sendData(sendData)
+    , m_serial(serial)
 {
     m_receiver = new Receiver(this);
     Q_ASSERT(m_receiver);
@@ -53,14 +56,6 @@ void Controller::recvDeviceMsg(DeviceMsg *deviceMsg)
     }
 
     m_receiver->recvDeviceMsg(deviceMsg);
-}
-
-void Controller::test(QRect rc)
-{
-    ControlMsg *controlMsg = new ControlMsg(ControlMsg::CMT_INJECT_TOUCH);
-    controlMsg->setInjectTouchMsgData(
-        static_cast<quint64>(POINTER_ID_MOUSE), AMOTION_EVENT_ACTION_DOWN, AMOTION_EVENT_BUTTON_PRIMARY, AMOTION_EVENT_BUTTON_PRIMARY, rc, 1.0f);
-    postControlMsg(controlMsg);
 }
 
 void Controller::updateScript(QString gameScript)
@@ -290,6 +285,55 @@ void Controller::cameraZoomIn()
 void Controller::cameraZoomOut()
 {
     postControlMsg(new ControlMsg(ControlMsg::CMT_CAMERA_ZOOM_OUT));
+}
+
+void Controller::ensureRealTouchSession()
+{
+    if (m_cameraMode || m_serial.isEmpty()) {
+        return;
+    }
+    if (!m_realTouchSession) {
+        m_realTouchSession = new AdbSendEventSession(this);
+    }
+    if (!m_realTouchSession->isRunning()) {
+        m_realTouchSession->start(m_serial);
+    }
+}
+
+void Controller::sendRealTouch(int slot, AndroidMotioneventAction action, QPoint framePos, const QSize &frameSize)
+{
+    if (m_cameraMode) {
+        // no on-screen touch target in camera-only mode
+        return;
+    }
+
+    ensureRealTouchSession();
+    if (!m_realTouchSession || !m_realTouchSession->isRunning()) {
+        qWarning() << "Controller::sendRealTouch: sendevent session not running, dropping touch event";
+        return;
+    }
+
+    const AdbSendEventSession::TouchProfile &profile = m_realTouchSession->touchProfile();
+    int rawX = 0;
+    int rawY = 0;
+    if (frameSize.width() > 0 && frameSize.height() > 0) {
+        rawX = qBound(0, static_cast<int>(qRound(framePos.x() * static_cast<double>(profile.xMax) / frameSize.width())), profile.xMax);
+        rawY = qBound(0, static_cast<int>(qRound(framePos.y() * static_cast<double>(profile.yMax) / frameSize.height())), profile.yMax);
+    }
+
+    switch (action) {
+    case AMOTION_EVENT_ACTION_DOWN:
+        m_realTouchSession->touchDown(slot, slot + 1, rawX, rawY);
+        break;
+    case AMOTION_EVENT_ACTION_MOVE:
+        m_realTouchSession->touchMove(slot, rawX, rawY);
+        break;
+    case AMOTION_EVENT_ACTION_UP:
+        m_realTouchSession->touchUp(slot);
+        break;
+    default:
+        break;
+    }
 }
 
 void Controller::mouseEvent(const QMouseEvent *from, const QSize &frameSize, const QSize &showSize)

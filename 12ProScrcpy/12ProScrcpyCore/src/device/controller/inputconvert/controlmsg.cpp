@@ -50,22 +50,6 @@ void ControlMsg::setInjectTextMsgData(QString &text)
     m_data.injectText.text[tmp.length()] = '\0';
 }
 
-void ControlMsg::setInjectTouchMsgData(
-    quint64 id,
-    AndroidMotioneventAction action,
-    AndroidMotioneventButtons actionButtons,
-    AndroidMotioneventButtons buttons,
-    QRect position,
-    float pressure)
-{
-    m_data.injectTouch.id = id;
-    m_data.injectTouch.action = action;
-    m_data.injectTouch.actionButtons = actionButtons;
-    m_data.injectTouch.buttons = buttons;
-    m_data.injectTouch.position = position;
-    m_data.injectTouch.pressure = pressure;
-}
-
 void ControlMsg::setInjectScrollMsgData(QRect position, float hScroll, float vScroll, AndroidMotioneventButtons buttons)
 {
     m_data.injectScroll.position = position;
@@ -142,16 +126,6 @@ void ControlMsg::writePosition(QBuffer &buffer, const QRect &value)
     BufferUtil::write16(buffer, value.height());
 }
 
-quint16 ControlMsg::flostToU16fp(float f)
-{
-    Q_ASSERT(f >= 0.0f && f <= 1.0f);
-    quint32 u = f * 0x1p16f; // 2^16
-    if (u >= 0xffff) {
-        u = 0xffff;
-    }
-    return (quint16)u;
-}
-
 qint16 ControlMsg::flostToI16fp(float f)
 {
     Q_ASSERT(f >= -1.0f && f <= 1.0f);
@@ -182,15 +156,10 @@ QByteArray ControlMsg::serializeData()
         BufferUtil::write32(buffer, static_cast<quint32>(strlen(m_data.injectText.text)));
         buffer.write(m_data.injectText.text, strlen(m_data.injectText.text));
         break;
-    case CMT_INJECT_TOUCH: {
-        buffer.putChar(m_data.injectTouch.action);
-        BufferUtil::write64(buffer, m_data.injectTouch.id);
-        writePosition(buffer, m_data.injectTouch.position);
-        quint16 pressure = flostToU16fp(m_data.injectTouch.pressure);
-        BufferUtil::write16(buffer, pressure);
-        BufferUtil::write32(buffer, m_data.injectTouch.actionButtons);
-        BufferUtil::write32(buffer, m_data.injectTouch.buttons);
-    } break;
+    case CMT_INJECT_TOUCH:
+        // No longer emitted - see comment on CMT_INJECT_TOUCH in controlmsg.h.
+        Q_ASSERT(0 && "CMT_INJECT_TOUCH should never be serialized anymore");
+        break;
     case CMT_INJECT_SCROLL: {
         writePosition(buffer, m_data.injectScroll.position);
         // Accept values in the range [-16, 16].

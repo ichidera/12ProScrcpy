@@ -9,6 +9,7 @@
 #include <CoreGraphics/CoreGraphics.h>
 #endif
 
+#include "controller.h"
 #include "inputconvertgame.h"
 
 #define CURSOR_POS_CHECK 50
@@ -185,27 +186,20 @@ void InputConvertGame::sendTouchEvent(int id, QPointF pos, AndroidMotioneventAct
         return;
     }
     //qDebug() << "id:" << id << " pos:" << pos << " action" << action;
-    ControlMsg *controlMsg = new ControlMsg(ControlMsg::CMT_INJECT_TOUCH);
-    if (!controlMsg) {
-        return;
-    }
-
     QPoint absolutePos = calcFrameAbsolutePos(pos).toPoint();
     static QPoint lastAbsolutePos = absolutePos;
     if (AMOTION_EVENT_ACTION_MOVE == action && lastAbsolutePos == absolutePos) {
-        delete controlMsg;
         return;
     }
     lastAbsolutePos = absolutePos;
 
-    controlMsg->setInjectTouchMsgData(
-        static_cast<quint64>(id),
-        action,
-        static_cast<AndroidMotioneventButtons>(0),
-        static_cast<AndroidMotioneventButtons>(0),
-        QRect(absolutePos, m_frameSize),
-        AMOTION_EVENT_ACTION_DOWN == action ? 1.0f : 0.0f);
-    sendControlMsg(controlMsg);
+    // Inject the touch directly via `adb shell sendevent` (real kernel input
+    // node). The custom-keymap id (0..MULTI_TOUCH_MAX_NUM-1) maps 1:1 onto a
+    // hardware multitouch slot; slot Controller::kMouseTouchSlot is reserved
+    // for the plain-mouse path, so MULTI_TOUCH_MAX_NUM stays below it.
+    if (m_controller) {
+        m_controller->sendRealTouch(id, action, absolutePos, m_frameSize);
+    }
 }
 
 void InputConvertGame::sendKeyEvent(AndroidKeyeventAction action, AndroidKeycode keyCode) {
