@@ -8,6 +8,7 @@
 #include <QPainter>
 #include <QScreen>
 #include <QShortcut>
+#include <QKeySequence>
 #include <QStyle>
 #include <QStyleOption>
 #include <QTimer>
@@ -42,6 +43,9 @@ VideoForm::VideoForm(bool framelessWindow, bool skin, bool showToolbar, int deco
         }
     });
     initUI();
+    // Load persisted cursor-lock key and install its shortcut.
+    m_cursorLockKey = Config::getInstance().getUserBootConfig().cursorLockKey;
+    installCursorLockShortcut();
     installShortcut();
     updateShowSize(size());
     bool vertical = size().height() > size().width();
@@ -254,6 +258,71 @@ void VideoForm::moveCenter()
     }
     // 窗口居中
     move(screenRect.center() - QRect(0, 0, size().width(), size().height()).center());
+}
+
+// Installs (or re-installs) the QShortcut for the cursor-lock key.
+// Called from the constructor and from setCursorLockKey().
+void VideoForm::installCursorLockShortcut()
+{
+    // Destroy any previous shortcut so the old key stops firing.
+    if (!m_cursorLockShortcut.isNull()) {
+        delete m_cursorLockShortcut.data();
+    }
+
+    m_cursorLockShortcut = new QShortcut(QKeySequence(m_cursorLockKey), this);
+    m_cursorLockShortcut->setAutoRepeat(false);
+    connect(m_cursorLockShortcut, &QShortcut::activated, this, [this]() {
+        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
+        if (!device || !device->isCurrentCustomKeymap()) {
+            // No active keymap — still lock/unlock cursor for plain game use.
+        }
+        m_cursorLockActive = !m_cursorLockActive;
+
+        // 1. Confine (or free) the OS cursor to the video widget rect.
+        grabCursor(m_cursorLockActive);
+
+        // 2. Hide the cursor inside the window so there's no visible pointer
+        //    during aiming, or restore it when unlocking.
+        if (m_cursorLockActive) {
+            QGuiApplication::setOverrideCursor(QCursor(Qt::BlankCursor));
+        } else {
+            QGuiApplication::restoreOverrideCursor();
+        }
+
+        // 3. Update window title to show lock state.
+        QString base = windowTitle();
+        // Strip any previous lock indicator.
+        base.remove(" [CURSOR LOCKED]");
+        base.remove(" [cursor free]");
+        if (m_cursorLockActive) {
+            setWindowTitle(base + " [CURSOR LOCKED]");
+        } else {
+            setWindowTitle(base + " [cursor free]");
+        }
+
+        qInfo() << (m_cursorLockActive ? "VideoForm: cursor LOCKED" : "VideoForm: cursor FREE");
+    });
+}
+
+void VideoForm::setCursorLockKey(int qtKey)
+{
+    if (qtKey == m_cursorLockKey) return;
+    m_cursorLockKey = qtKey;
+
+    // Persist the new choice.
+    UserBootConfig cfg = Config::getInstance().getUserBootConfig();
+    cfg.cursorLockKey = qtKey;
+    Config::getInstance().setUserBootConfig(cfg);
+
+    // Tell the input converter in the core so keyEvent() also intercepts
+    // the new key (for game-mode injection path).
+    auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
+    if (device) {
+        device->setCursorLockKey(qtKey);
+    }
+
+    // Re-install the shortcut with the new key sequence.
+    installCursorLockShortcut();
 }
 
 void VideoForm::installShortcut()

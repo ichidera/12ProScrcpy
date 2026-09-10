@@ -81,7 +81,19 @@ bool Controller::isCurrentCustomKeymap()
     }
 
     return m_inputConvert->isCurrentCustomKeymap();
+}
+void Controller::setCursorLockKey(int qtKey)
+{
+    if (!m_inputConvert) {
+        return;
+    }
+    // InputConvertGame exposes setCursorLockKey; cast if possible.
+    auto *game = qobject_cast<InputConvertGame*>(m_inputConvert);
+    if (game) {
+        game->setCursorLockKey(qtKey);
+    }
 }
+
 
 void Controller::postBackOrScreenOn(bool down)
 {
@@ -95,24 +107,26 @@ void Controller::postBackOrScreenOn(bool down)
 
 void Controller::postGoHome()
 {
-    // uinput-goodix's KEY_HOME registers at the kernel input layer (confirmed
-    // via getevent) but does not translate into an actual Home navigation
-    // action - it's the touchscreen's gesture-wake virtual device, not a
-    // general-purpose nav key source. Use the framework fallback instead,
-    // same as AppSwitch/Copy/Cut.
-    postKeyCodeClick(AKEYCODE_HOME);
+    ensureRealTouchSession();
+    if (m_realTouchSession && m_realTouchSession->isRunning()) {
+        m_realTouchSession->pressHome();
+    }
 }
 
 void Controller::postGoMenu()
 {
-    // see postGoHome() - same uinput-goodix limitation applies to KEY_MENU
-    postKeyCodeClick(AKEYCODE_MENU);
+    ensureRealTouchSession();
+    if (m_realTouchSession && m_realTouchSession->isRunning()) {
+        m_realTouchSession->pressMenu();
+    }
 }
 
 void Controller::postGoBack()
 {
-    // see postGoHome() - same uinput-goodix limitation applies to KEY_BACK
-    postKeyCodeClick(AKEYCODE_BACK);
+    ensureRealTouchSession();
+    if (m_realTouchSession && m_realTouchSession->isRunning()) {
+        m_realTouchSession->pressBack();
+    }
 }
 
 void Controller::postAppSwitch()

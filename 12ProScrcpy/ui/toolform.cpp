@@ -1,4 +1,10 @@
 #include <QDebug>
+#include <QApplication>
+#include <QCoreApplication>
+#include <QInputDialog>
+#include <QKeyEvent>
+#include <QKeySequence>
+#include <QMessageBox>
 #include <QHideEvent>
 #include <QMouseEvent>
 #include <QShowEvent>
@@ -78,6 +84,16 @@ void ToolForm::initStyle()
     IconHelper::Instance()->SetIcon(ui->expandSettingsBtn, QChar(0xf013), 15);
     IconHelper::Instance()->SetIcon(ui->rotateBtn, QChar(0xf021), 15);
     IconHelper::Instance()->SetIcon(ui->screenShotBtn, QChar(0xf0c4), 15);
+    // cursor-lock button: lock icon (0xf023 = fa-lock), tooltip shows current key
+    IconHelper::Instance()->SetIcon(ui->cursorLockBtn, QChar(0xf023), 15);
+    {
+        VideoForm *vf = qobject_cast<VideoForm*>(parent());
+        if (vf) {
+            ui->cursorLockBtn->setToolTip(
+                QString("cursor lock (%1) — Ctrl+click to change")
+                .arg(QKeySequence(vf->cursorLockKey()).toString()));
+        }
+    }
     IconHelper::Instance()->SetIcon(ui->touchBtn, QChar(0xf111), 15);
     IconHelper::Instance()->SetIcon(ui->groupControlBtn, QChar(0xf0c0), 15);
     IconHelper::Instance()->SetIcon(ui->clipboardBtn, QChar(0xf0c5), 15);
@@ -314,4 +330,65 @@ void ToolForm::on_clipboardBtn_clicked()
         return;
     }
     device->requestDeviceClipboard();
+}
+
+void ToolForm::on_cursorLockBtn_clicked()
+{
+    // The button has two behaviours depending on modifier keys:
+    //   - Plain click: toggle the current cursor-lock state (same as F1).
+    //   - Ctrl+click: open a dialog to reassign the lock key.
+    VideoForm *vf = qobject_cast<VideoForm*>(parent());
+    if (!vf) {
+        return;
+    }
+
+    if (QApplication::keyboardModifiers() & Qt::ControlModifier) {
+        // ── Ctrl+click: let the user press any key to rebind ─────────────
+        QMessageBox msgBox(this);
+        msgBox.setWindowTitle("Change cursor-lock key");
+        msgBox.setText(
+            QString("Current key: <b>%1</b><br><br>"
+                    "Choose a new key:\n")
+            .arg(QKeySequence(vf->cursorLockKey()).toString()));
+        QPushButton *f1Btn  = msgBox.addButton("F1 (default)",  QMessageBox::ActionRole);
+        QPushButton *f2Btn  = msgBox.addButton("F2",            QMessageBox::ActionRole);
+        QPushButton *f3Btn  = msgBox.addButton("F3",            QMessageBox::ActionRole);
+        QPushButton *f4Btn  = msgBox.addButton("F4",            QMessageBox::ActionRole);
+        QPushButton *tabBtn = msgBox.addButton("Tab",           QMessageBox::ActionRole);
+        QPushButton *graveBtn = msgBox.addButton("`  (backtick)",  QMessageBox::ActionRole);
+        msgBox.addButton(QMessageBox::Cancel);
+        msgBox.exec();
+
+        int newKey = -1;
+        if      (msgBox.clickedButton() == f1Btn)    newKey = Qt::Key_F1;
+        else if (msgBox.clickedButton() == f2Btn)    newKey = Qt::Key_F2;
+        else if (msgBox.clickedButton() == f3Btn)    newKey = Qt::Key_F3;
+        else if (msgBox.clickedButton() == f4Btn)    newKey = Qt::Key_F4;
+        else if (msgBox.clickedButton() == tabBtn)   newKey = Qt::Key_Tab;
+        else if (msgBox.clickedButton() == graveBtn) newKey = Qt::Key_QuoteLeft;
+
+        if (newKey != -1) {
+            vf->setCursorLockKey(newKey);
+            // Update tooltip to reflect new key.
+            ui->cursorLockBtn->setToolTip(
+                QString("cursor lock (%1) — Ctrl+click to change")
+                .arg(QKeySequence(newKey).toString()));
+        }
+    } else {
+        // ── Plain click: fire the lock key shortcut programmatically ─────
+        // Synthesise a shortcut activation the same way pressing the key would.
+        // We call the shortcut's activated() signal indirectly via QKeyEvent
+        // because QShortcut doesn't expose an activate() method.  Instead we
+        // route through VideoForm which owns the shortcut.
+        //
+        // Simplest correct approach: emit a synthetic QKeyEvent to the video form.
+        QKeyEvent press(QEvent::KeyPress, vf->cursorLockKey(), Qt::NoModifier);
+        QCoreApplication::sendEvent(vf, &press);
+        QKeyEvent release(QEvent::KeyRelease, vf->cursorLockKey(), Qt::NoModifier);
+        QCoreApplication::sendEvent(vf, &release);
+
+        // Reflect state in button checked appearance.
+        m_cursorLockState = !m_cursorLockState;
+        ui->cursorLockBtn->setChecked(m_cursorLockState);
+    }
 }

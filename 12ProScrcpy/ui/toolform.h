@@ -53,6 +53,7 @@ private slots:
     void on_groupControlBtn_clicked();
     void on_openScreenBtn_clicked();
     void on_clipboardBtn_clicked();
+    void on_cursorLockBtn_clicked();
 
 private:
     void initStyle();
@@ -66,6 +67,7 @@ private:
     bool m_showTouch = false;
     bool m_cameraTorch = false;
     bool m_isHost = false;
+    bool m_cursorLockState = false; // mirrors VideoForm::m_cursorLockActive
 };
 
 #endif // TOOLFORM_H

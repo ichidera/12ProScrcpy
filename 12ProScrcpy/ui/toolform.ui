@@ -194,6 +194,19 @@
     </widget>
    </item>
    <item>
+    <widget class="QPushButton" name="cursorLockBtn">
+     <property name="toolTip">
+      <string>cursor lock (F1) — click to change key</string>
+     </property>
+     <property name="text">
+      <string/>
+     </property>
+     <property name="checkable">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
     <widget class="QPushButton" name="cameraTorchBtn">
      <property name="toolTip">
       <string>torch</string>

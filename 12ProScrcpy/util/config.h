@@ -1,4 +1,4 @@
-﻿#ifndef CONFIG_H
+#ifndef CONFIG_H
 #define CONFIG_H
 
 #include <QObject>
@@ -39,6 +39,8 @@ struct UserBootConfig
     bool vdDestroyContent = true;
     bool keepActive = false;
     QString startApp;
+    // Qt key code for the cursor-lock toggle (default Qt::Key_F1 = 0x01000030)
+    int cursorLockKey = 0x01000030;  // Qt::Key_F1
 };
 
 class QSettings;

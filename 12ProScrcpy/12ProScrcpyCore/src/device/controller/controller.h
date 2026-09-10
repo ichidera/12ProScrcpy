@@ -46,6 +46,7 @@ public:
 
     void updateScript(QString gameScript = "");
     bool isCurrentCustomKeymap();
+    void setCursorLockKey(int qtKey);
 
     void postGoBack();
     void postGoHome();

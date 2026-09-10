@@ -147,6 +147,9 @@ public:
 
     virtual void updateScript(QString script) = 0;
     virtual bool isCurrentCustomKeymap() = 0;
+    // Set the cursor-lock toggle key (Qt key code). Called from VideoForm
+    // when the user picks a new key in settings. Default: Qt::Key_F1.
+    virtual void setCursorLockKey(int qtKey) { Q_UNUSED(qtKey); }
 };
 
 class IDeviceManage : public QObject {
