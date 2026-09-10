@@ -83,12 +83,48 @@ def matches_simple(patterns: List[str], rel: Path) -> bool:
     from fnmatch import fnmatch
 
     s = str(rel.as_posix())
+    path_parts = rel.parts
+    
     for pat in patterns:
+        # Skip empty patterns and comments
+        if not pat or pat.startswith('#'):
+            continue
+            
+        # Handle patterns ending with / (directory-only)
         if pat.endswith('/'):
-            if s.startswith(pat.rstrip('/')):
+            dir_pat = pat.rstrip('/').lstrip('/') 
+            # Check if this directory or any parent is the pattern
+            for i, part in enumerate(path_parts):
+                if part == dir_pat:
+                    return True
+                # Also check full path up to this point
+                partial_path = '/'.join(path_parts[:i+1])
+                if partial_path == dir_pat:
+                    return True
+        else:
+            # Remove leading / from pattern (means match from root in gitignore)
+            clean_pat = pat.lstrip('/')
+            
+            # Direct match
+            if s == clean_pat:
                 return True
-        if fnmatch(s, pat) or fnmatch(rel.name, pat):
-            return True
+            # Match against filename only
+            if fnmatch(rel.name, clean_pat):
+                return True
+            # Fnmatch against full path
+            if fnmatch(s, clean_pat):
+                return True
+            # Check if this is a file under an ignored directory
+            # e.g., pattern /QtScrcpy/screenshot should match QtScrcpy/screenshot/game.png
+            if '/' in clean_pat:
+                if s.startswith(clean_pat + '/'):
+                    return True
+                # Also check if path starts with pattern as a directory component
+                for i, part in enumerate(path_parts):
+                    partial = '/'.join(path_parts[:i+1])
+                    if partial == clean_pat:
+                        return True
+    
     return False
 
 
@@ -121,12 +157,23 @@ def main() -> int:
     repo_root = find_repo_root(start)
     output = (repo_root / args.output).resolve()
 
+    # Parse gitignore patterns
+    patterns = parse_gitignore(repo_root)
+    
     # Prefer git to get an accurate list that excludes .gitignore entries
     files = git_list_files(repo_root)
+    
     if files:
+        # Even with git, apply ignore patterns to handle tracked files that should be ignored
         files = [p for p in files if p.is_file() and p.resolve() != output]
+        # Filter out files matching gitignore patterns
+        filtered_files = []
+        for f in files:
+            rel = f.relative_to(repo_root)
+            if not matches_simple(patterns, rel):
+                filtered_files.append(f)
+        files = filtered_files
     else:
-        patterns = parse_gitignore(repo_root)
         files = list(walk_and_filter(repo_root, patterns))
         files = [p for p in files if p.resolve() != output]
 

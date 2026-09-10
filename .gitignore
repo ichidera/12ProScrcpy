@@ -52,3 +52,9 @@ local.properties
 
 # End of consolidated .gitignore
 12PROSCRCPY.zip
+/QtScrcpy/screenshot
+/QtScrcpy/docs
+/QtScrcpy/.github
+/Scrcpy/assets
+/Scrcpy/config
+/Scrcpy/.github
