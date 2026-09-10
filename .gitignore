@@ -1,10 +1,54 @@
+# Consolidated root .gitignore
+# This file was generated to ensure patterns from subfolder .gitignore files
+# are acknowledged from the repository root.
+#
+# Source: QtScrcpy/.gitignore
+/output
+*.user
+/QtScrcpy/*.user
+/server/.gradle
+/server/.idea
+/server/build
+/server/gradle/wrapper/gradle-wrapper.jar
+/server/gradle/wrapper/gradle-wrapper.properties
+/server/gradlew
+/server/gradlew.bat
+/server/local.properties
+/build/
+build-*
+*.DS_Store
+userdata.ini
+Info_Mac.plist
+/ci/build_temp
+
+# Source: Scrcpy/.gitignore
 build/
 /dist/
-/build-*/
-/build_*/
+/build-*
+/build_*
 /release-*/
 .idea/
 .gradle/
 /x/
 local.properties
 /scrcpy-server
+
+# Source: Scrcpy/server/.gitignore
+*.iml
+.gradle
+/local.properties
+/.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+
+# Source: Scrcpy/app/deps/.gitignore
+/work
+
+# Source: Scrcpy/release/.gitignore
+/work
+/output
+
+# End of consolidated .gitignore
+12PROSCRCPY.zip

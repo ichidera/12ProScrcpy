@@ -33,7 +33,33 @@ def git_list_files(repo_root: Path) -> List[Path]:
         if not out:
             return []
         parts = out.split(b"\x00")
-        paths = [repo_root / p.decode('utf-8') for p in parts if p]
+        paths: List[Path] = [repo_root / p.decode('utf-8') for p in parts if p]
+
+        # If repository has submodules, collect their tracked files too
+        gitmodules = repo_root / '.gitmodules'
+        if gitmodules.exists():
+            # parse submodule paths from .gitmodules
+            subpaths: List[str] = []
+            for line in gitmodules.read_text(encoding='utf-8', errors='ignore').splitlines():
+                line = line.strip()
+                if line.startswith('path ='):
+                    subpaths.append(line.split('=', 1)[1].strip())
+
+            for sp in subpaths:
+                subdir = repo_root / sp
+                try:
+                    cmd2 = ['git', 'ls-files', '-z', '-c', '-o', '--exclude-standard']
+                    out2 = subprocess.check_output(cmd2, cwd=subdir)
+                    parts2 = out2.split(b"\x00")
+                    for p in parts2:
+                        if not p:
+                            continue
+                        # store full path to file inside parent repo
+                        paths.append(subdir / p.decode('utf-8'))
+                except Exception:
+                    # ignore submodule collection errors
+                    continue
+
         return paths
     except Exception:
         return []
