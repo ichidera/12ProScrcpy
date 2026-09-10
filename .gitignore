@@ -89,3 +89,6 @@ target_wrapper.*
 CMakeLists.txt.user*
 compile_commands.json
 *creator.user*
+
+# Extras
+Adbmirror.zip
