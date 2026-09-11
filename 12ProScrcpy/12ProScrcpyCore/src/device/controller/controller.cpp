@@ -115,17 +115,26 @@ void Controller::postAppSwitch()
 
 void Controller::postPower()
 {
-    postKeyCodeClick(AKEYCODE_POWER);
+    ensureRealTouchSession();
+    if (m_realTouchSession && m_realTouchSession->isRunning()) {
+        m_realTouchSession->pressPower();
+    }
 }
 
 void Controller::postVolumeUp()
 {
-    postKeyCodeClick(AKEYCODE_VOLUME_UP);
+    ensureRealTouchSession();
+    if (m_realTouchSession && m_realTouchSession->isRunning()) {
+        m_realTouchSession->pressVolumeUp();
+    }
 }
 
 void Controller::postVolumeDown()
 {
-    postKeyCodeClick(AKEYCODE_VOLUME_DOWN);
+    ensureRealTouchSession();
+    if (m_realTouchSession && m_realTouchSession->isRunning()) {
+        m_realTouchSession->pressVolumeDown();
+    }
 }
 
 void Controller::copy()
