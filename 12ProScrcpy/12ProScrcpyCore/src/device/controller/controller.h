@@ -115,6 +115,11 @@ private:
     QPointer<AdbSendEventSession> m_realTouchSession;
     DeviceRotation m_deviceRotation = DeviceRotation::Unknown;
     QPointer<QTimer> m_rotationPollTimer;
+    // Guards against overlapping `dumpsys window` polls piling up if one
+    // call happens to take longer than the poll interval (e.g. a slow/
+    // wireless adb connection) - without this, a slow poll could still be
+    // in flight when the next timer tick fires another one.
+    bool m_rotationPollInFlight = false;
 };
 
 #endif // CONTROLLER_H

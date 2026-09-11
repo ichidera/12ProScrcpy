@@ -319,15 +319,18 @@ void Controller::ensureRotationPolling()
         return;
     }
 
-    // Polled rather than queried per-touch: `dumpsys window` is too slow
-    // (tens to hundreds of ms) to call on every ACTION_DOWN without adding
-    // visible touch latency, and physical device rotation changes far less
-    // often than that. A ~1s-stale cached value is an acceptable trade-off;
-    // sendRealTouch() falls back to the ROTATION_90 formula if no poll has
-    // completed yet.
+    // Polled rather than queried per-touch: blocking on `dumpsys window`
+    // synchronously inside sendRealTouch() would add visible touch latency.
+    // Polling async in the background at a short interval instead gives
+    // near-seamless detection without ever blocking a touch: `dumpsys
+    // window` normally completes in tens of ms, so a 200ms interval keeps
+    // the cached m_deviceRotation at most ~200ms (worst case, a bit more if
+    // adb is slow - see m_rotationPollInFlight) stale after a physical
+    // rotation. sendRealTouch() falls back to the ROTATION_90 formula if no
+    // poll has completed yet.
     m_rotationPollTimer = new QTimer(this);
     connect(m_rotationPollTimer, &QTimer::timeout, this, &Controller::pollDeviceRotation);
-    m_rotationPollTimer->start(1000);
+    m_rotationPollTimer->start(200);
     pollDeviceRotation(); // seed immediately instead of waiting for the first tick
 }
 
@@ -336,6 +339,13 @@ void Controller::pollDeviceRotation()
     if (m_cameraMode || m_serial.isEmpty()) {
         return;
     }
+    if (m_rotationPollInFlight) {
+        // Previous poll (e.g. over a slow/wireless adb connection) hasn't
+        // finished yet - skip this tick rather than piling up overlapping
+        // `dumpsys` processes.
+        return;
+    }
+    m_rotationPollInFlight = true;
 
     // Fire-and-forget: whichever poll lands most recently just updates the
     // cache that sendRealTouch() reads; nothing here blocks touch delivery.
@@ -363,6 +373,7 @@ void Controller::pollDeviceRotation()
                 break;
             }
         }
+        m_rotationPollInFlight = false;
         proc->deleteLater();
     });
     proc->start(AdbProcessImpl::getAdbPath(), {"-s", m_serial, "shell", "dumpsys", "window"});
@@ -386,30 +397,27 @@ void Controller::sendRealTouch(int slot, AndroidMotioneventAction action, QPoint
     int rawY = 0;
     if (frameSize.width() > 0 && frameSize.height() > 0) {
         const bool frameIsLandscape = frameSize.width() > frameSize.height();
-        // Touch panel's native coordinate space is portrait. Android has two
-        // landscape rotations (ROTATION_90 and ROTATION_270) that are
-        // mirror-image chiralities of each other and need different
-        // pre-rotation formulas before scaling to native panel coords, or
-        // Android's real rotation-correction double-applies (or wrongly
-        // applies) the transform - but both give a width>height frame, so
-        // frameSize alone can't tell them apart. m_deviceRotation (polled
-        // from `dumpsys window`'s mCurrentRotation) disambiguates; if no
-        // poll has landed yet, default to the ROTATION_90 formula below.
-        if (frameIsLandscape && m_deviceRotation == DeviceRotation::Rotation270) {
-            // ROTATION_270 ("seascape"): axes must be swapped (and one
-            // flipped) before scaling to native panel coords. This is the
-            // original, well-established landscape fix.
+        // Touch panel's native coordinate space is portrait. A landscape
+        // mirrored frame (width() > height()) always needs the same
+        // pre-rotation before scaling to native panel coords - axes
+        // swapped, one flipped - regardless of whether the device is
+        // currently at ROTATION_90 or ROTATION_270.
+        //
+        // We originally assumed ROTATION_90 and ROTATION_270, being
+        // mirror-image chiralities, would need opposite/mirrored formulas,
+        // and added m_deviceRotation (polled from `dumpsys window`'s
+        // mCurrentRotation) specifically to disambiguate which to apply.
+        // On-device calibration at both rotations disproved that: the same
+        // swap formula matches real tap results (within calibration noise)
+        // at both ROTATION_90 and ROTATION_270, so no disambiguation is
+        // actually needed here. m_deviceRotation / the rotation poll is
+        // kept in place (harmless, and cheap now at 200ms) in case a real
+        // divergence shows up in further testing - see CHANGELOG.
+        if (frameIsLandscape) {
+            // Empirically derived and verified against on-device tap tests
+            // at both ROTATION_90 and ROTATION_270.
             double rx = framePos.y() * static_cast<double>(profile.xMax) / frameSize.height();
             double ry = profile.yMax - (framePos.x() * static_cast<double>(profile.yMax) / frameSize.width());
-            rawX = qBound(0, static_cast<int>(qRound(rx)), profile.xMax);
-            rawY = qBound(0, static_cast<int>(qRound(ry)), profile.yMax);
-        } else if (frameIsLandscape) {
-            // ROTATION_90 ("landscape"): no axis swap needed here, just a
-            // flip of both axes before scaling to native panel coords.
-            // Empirically derived and verified against on-device tap tests
-            // (small, slightly noisy 3-point calibration sample).
-            double rx = profile.xMax - (framePos.x() * static_cast<double>(profile.xMax) / frameSize.width());
-            double ry = profile.yMax - (framePos.y() * static_cast<double>(profile.yMax) / frameSize.height());
             rawX = qBound(0, static_cast<int>(qRound(rx)), profile.xMax);
             rawY = qBound(0, static_cast<int>(qRound(ry)), profile.yMax);
         } else {
