@@ -10,6 +10,7 @@
 #include "inputconvertbase.h"
 
 class QTcpSocket;
+class QTimer;
 class Receiver;
 class InputConvertBase;
 class DeviceMsg;
@@ -86,6 +87,23 @@ private:
     void sendPendingResize();
     void ensureRealTouchSession();
 
+    // Android has two landscape rotations (ROTATION_90 and ROTATION_270)
+    // that are mirror-image chiralities of each other and need opposite
+    // touch pre-rotation formulas in sendRealTouch() - but both produce a
+    // frame with width() > height(), so frameSize alone can't tell them
+    // apart. These poll the live value via `dumpsys window`'s
+    // mCurrentRotation so sendRealTouch() knows which formula to apply.
+    enum class DeviceRotation
+    {
+        Rotation0,
+        Rotation90,
+        Rotation180,
+        Rotation270,
+        Unknown
+    };
+    void ensureRotationPolling();
+    void pollDeviceRotation();
+
 private:
     QPointer<Receiver> m_receiver;
     QPointer<InputConvertBase> m_inputConvert;
@@ -95,6 +113,8 @@ private:
     bool m_cameraMode = false;
     QString m_serial;
     QPointer<AdbSendEventSession> m_realTouchSession;
+    DeviceRotation m_deviceRotation = DeviceRotation::Unknown;
+    QPointer<QTimer> m_rotationPollTimer;
 };
 
 #endif // CONTROLLER_H
