@@ -194,6 +194,8 @@ set(QC_UI_SOURCES
     ui/controlinspectordialog.cpp
     ui/gamecontrolseditor.h
     ui/gamecontrolseditor.cpp
+    ui/editmodeoverlay.h
+    ui/editmodeoverlay.cpp
     render/qyuvopenglwidget.h
     render/qyuvopenglwidget.cpp
 )

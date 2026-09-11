@@ -13,6 +13,7 @@ constexpr const char *kGameControlMimeType = "application/x-qtscrcpy-control-act
 
 class VideoForm;
 class GameControlMarker;
+class EditModeOverlay;
 class QComboBox;
 class KeyCaptureButton;
 
@@ -36,6 +37,7 @@ public:
 
 protected:
     void showEvent(QShowEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
@@ -43,6 +45,7 @@ private slots:
     void onNewProfile();
     void onSaveProfile();
     void onDeleteProfile();
+    void onCancelEdits();
 
 private:
     void buildUi();
@@ -54,13 +57,17 @@ private:
     void editMarker(GameControlMarker *marker);
     void removeMarker(GameControlMarker *marker);
     bool hasLookNode(GameControlMarker *exclude = nullptr) const;
+    void ensureOverlay();
+    void setDirty(bool dirty);
 
 private:
     QString m_serial;
     QPointer<VideoForm> m_videoForm;
+    QPointer<EditModeOverlay> m_overlay;
 
     QComboBox *m_profileCombo = nullptr;
-    KeyCaptureButton *m_switchKeyCapture = nullptr;
+    KeyCaptureButton *m_switchKeyCapture = nullptr;     // activates the scheme (default `)
+    KeyCaptureButton *m_cursorLockKeyCapture = nullptr; // locks+hides the cursor (default F1)
 
     QVector<QPointer<GameControlMarker>> m_markers;
     QString m_currentProfileName;

@@ -1,6 +1,9 @@
 #include <QDebug>
 #include <QCursor>
 #include <QGuiApplication>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QMetaEnum>
 #include <QTimer>
 #include <QTime>
 #include <QRandomGenerator>
@@ -70,6 +73,15 @@ void InputConvertGame::keyEvent(const QKeyEvent *from, const QSize &frameSize, c
         if (!switchGameMap()) {
             m_needBackMouseMove = false;
         }
+        return;
+    }
+
+    // Cursor-lock toggle: independent of the master switch key above. Only
+    // takes effect while the custom keymap is already active, so it can
+    // never fire the grab/hide behavior on its own. Pressing it again while
+    // locked releases the cursor without leaving keymap mode.
+    if (m_gameMap && QEvent::KeyPress == from->type() && !from->isAutoRepeat() && from->key() == m_cursorLockKey) {
+        toggleCursorLock(!m_cursorLocked);
         return;
     }
 
@@ -148,6 +160,27 @@ bool InputConvertGame::isCurrentCustomKeymap()
 void InputConvertGame::loadKeyMap(const QString &json)
 {
     m_keyMap.loadKeyMap(json);
+
+    // "cursorLockKey" is parsed here directly (rather than inside KeyMap)
+    // because it isn't a touch-mapping node at all - it's InputConvertGame's
+    // own grab/hide toggle. Keeping it out of KeyMap's schema means this
+    // stays a small, self-contained addition instead of a KeyMap engine
+    // change. Falls back to F1 if absent/invalid so existing profiles keep
+    // working unchanged.
+    m_cursorLockKey = Qt::Key_F1;
+    QJsonParseError parseError;
+    QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8(), &parseError);
+    if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
+        const QString keyStr = doc.object().value("cursorLockKey").toString();
+        if (!keyStr.isEmpty()) {
+            QMetaEnum me = QMetaEnum::fromType<Qt::Key>();
+            bool ok = false;
+            int key = me.keyToValue(keyStr.toUtf8().constData(), &ok);
+            if (ok) {
+                m_cursorLockKey = key;
+            }
+        }
+    }
 }
 
 void InputConvertGame::updateSize(const QSize &frameSize, const QSize &showSize)
@@ -711,21 +744,41 @@ bool InputConvertGame::switchGameMap()
     m_gameMap = !m_gameMap;
     qInfo() << QString("current keymap mode: %1").arg(m_gameMap ? "custom" : "normal");
 
-    if (!m_keyMap.isValidMouseMoveMap()) {
-        return m_gameMap;
-    }
-#ifdef QT_NO_DEBUG
-    // grab cursor and set cursor only mouse move map
-    emit grabCursor(m_gameMap);
-#endif
-    hideMouseCursor(m_gameMap);
-
+    // NOTE: this key (the "` " / backtick switch key by default) used to also
+    // grab and hide the OS cursor here. That coupling is intentionally gone:
+    // this key now *only* activates/deactivates the custom keymap (so it
+    // "just focuses" input into the scheme, cursor stays visible). Locking
+    // and hiding the cursor is a separate, independently-bound action - see
+    // toggleCursorLock() / m_cursorLockKey, toggled from keyEvent().
     if (!m_gameMap) {
+        // Leaving keymap mode always releases any active cursor lock too,
+        // so you never get stuck with a hidden/grabbed cursor after backing
+        // out of the scheme entirely.
+        toggleCursorLock(false);
         stopMouseMoveTimer();
         mouseMoveStopTouch();
     }
 
     return m_gameMap;
+}
+
+void InputConvertGame::toggleCursorLock(bool lock)
+{
+    if (m_cursorLocked == lock) {
+        return;
+    }
+    if (lock && !m_keyMap.isValidMouseMoveMap()) {
+        // Nothing to aim/pan with - refuse to grab/hide the cursor for no
+        // reason (matches BlueStacks: locking only makes sense once an
+        // Aim/Pan/Shoot or Free look control exists in the scheme).
+        return;
+    }
+    m_cursorLocked = lock;
+    qInfo() << QString("cursor lock: %1").arg(lock ? "on" : "off");
+#ifdef QT_NO_DEBUG
+    emit grabCursor(lock);
+#endif
+    hideMouseCursor(lock);
 }
 
 void InputConvertGame::hideMouseCursor(bool hide)

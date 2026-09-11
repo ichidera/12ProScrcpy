@@ -66,13 +66,20 @@ public:
     static QString profileDirPath();
     static QStringList listProfiles(); // display names, no ".json" suffix
 
-    static bool loadProfile(const QString &name, QString &switchKey, QVector<ControlNode> &nodes, QString *error = nullptr);
-    static bool saveProfile(const QString &name, const QString &switchKey, const QVector<ControlNode> &nodes, QString *error = nullptr);
+    // cursorLockKey: the key that grabs+hides the OS cursor (BlueStacks-style
+    // "enter/exit shooting mode"), independent of switchKey which only
+    // activates the scheme. Defaults to F1 when a profile predates this
+    // field or leaves it blank.
+    static bool loadProfile(const QString &name, QString &switchKey, QString &cursorLockKey, QVector<ControlNode> &nodes,
+                             QString *error = nullptr);
+    static bool saveProfile(const QString &name, const QString &switchKey, const QString &cursorLockKey,
+                             const QVector<ControlNode> &nodes, QString *error = nullptr);
     static bool deleteProfile(const QString &name);
     static bool profileExists(const QString &name);
 
-    static QString toJson(const QString &switchKey, const QVector<ControlNode> &nodes);
-    static bool fromJson(const QString &json, QString &switchKey, QVector<ControlNode> &nodes, QString *error = nullptr);
+    static QString toJson(const QString &switchKey, const QString &cursorLockKey, const QVector<ControlNode> &nodes);
+    static bool fromJson(const QString &json, QString &switchKey, QString &cursorLockKey, QVector<ControlNode> &nodes,
+                          QString *error = nullptr);
 
     // Qt::Key_* <-> "Key_Xxx" / Qt::MouseButton <-> "LeftButton" etc, using
     // the same QMetaEnum lookups KeyMap::getItemKey() uses, so round-tripping
@@ -82,6 +89,7 @@ public:
     static bool stringToKey(const QString &s, int *outValue, bool *outIsMouse);
 
     static QString defaultSwitchKeyString();
+    static QString defaultCursorLockKeyString();
     static QString actionLabel(ControlActionKind kind);
 };
 

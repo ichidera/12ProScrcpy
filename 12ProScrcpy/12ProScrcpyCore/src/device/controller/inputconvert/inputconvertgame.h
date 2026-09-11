@@ -26,6 +26,11 @@ public:
 
     void loadKeyMap(const QString &json);
 
+    // True once toggleCursorLock(true) has grabbed+hidden the OS cursor.
+    // Independent of isCurrentCustomKeymap()/m_gameMap: the switch key only
+    // activates the scheme, this reflects the separately-bound lock key.
+    bool isCursorLocked() const { return m_cursorLocked; }
+
 protected:
     void updateSize(const QSize &frameSize, const QSize &showSize);
     void sendTouchDownEvent(int id, QPointF pos);
@@ -69,6 +74,11 @@ protected:
     bool checkCursorPos(const QMouseEvent *from);
     void hideMouseCursor(bool hide);
 
+    // Grabs/hides (or releases/restores) the OS cursor on its own, separate
+    // from the master switch key. Bound to m_cursorLockKey (default F1,
+    // overridable via the "cursorLockKey" field in the keymap JSON).
+    void toggleCursorLock(bool lock);
+
     void getDelayQueue(const QPointF& start, const QPointF& end,
                        const double& distanceStep, const double& posStepconst,
                        quint32 lowestTimer, quint32 highestTimer,
@@ -85,6 +95,8 @@ private:
     QSize m_frameSize;
     QSize m_showSize;
     bool m_gameMap = false;
+    bool m_cursorLocked = false;
+    int m_cursorLockKey = Qt::Key_F1; // rebindable via loadKeyMap()'s "cursorLockKey"
     bool m_needBackMouseMove = false;
     int m_multiTouchID[MULTI_TOUCH_MAX_NUM] = { 0 };
     KeyMap m_keyMap;

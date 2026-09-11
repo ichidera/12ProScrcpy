@@ -35,7 +35,10 @@ protected:
     void contextMenuEvent(QContextMenuEvent *event) override;
 
 private:
-    QString shortCode() const;
+    // The bound key/count shown as a small caption under the glyph (e.g.
+    // "W", "x3") - NOT the action name; the glyph itself (see paintEvent)
+    // already communicates the action type via shape.
+    QString shortCaption() const;
     QColor badgeColor() const;
 
 private:

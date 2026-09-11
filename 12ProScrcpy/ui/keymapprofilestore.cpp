@@ -78,7 +78,8 @@ bool KeyMapProfileStore::deleteProfile(const QString &name)
     return QFile::remove(profileDirPath() + "/" + name + ".json");
 }
 
-bool KeyMapProfileStore::loadProfile(const QString &name, QString &switchKey, QVector<ControlNode> &nodes, QString *error)
+bool KeyMapProfileStore::loadProfile(const QString &name, QString &switchKey, QString &cursorLockKey, QVector<ControlNode> &nodes,
+                                      QString *error)
 {
     QDir dir(profileDirPath());
     QFile file(dir.filePath(name + ".json"));
@@ -90,10 +91,11 @@ bool KeyMapProfileStore::loadProfile(const QString &name, QString &switchKey, QV
     }
     QString json = QString::fromUtf8(file.readAll());
     file.close();
-    return fromJson(json, switchKey, nodes, error);
+    return fromJson(json, switchKey, cursorLockKey, nodes, error);
 }
 
-bool KeyMapProfileStore::saveProfile(const QString &name, const QString &switchKey, const QVector<ControlNode> &nodes, QString *error)
+bool KeyMapProfileStore::saveProfile(const QString &name, const QString &switchKey, const QString &cursorLockKey,
+                                      const QVector<ControlNode> &nodes, QString *error)
 {
     QDir dir(profileDirPath());
     if (!dir.exists()) {
@@ -111,7 +113,7 @@ bool KeyMapProfileStore::saveProfile(const QString &name, const QString &switchK
         }
         return false;
     }
-    const QString json = toJson(switchKey, nodes);
+    const QString json = toJson(switchKey, cursorLockKey, nodes);
     file.write(json.toUtf8());
     file.close();
     return true;
@@ -120,6 +122,11 @@ bool KeyMapProfileStore::saveProfile(const QString &name, const QString &switchK
 QString KeyMapProfileStore::defaultSwitchKeyString()
 {
     return QStringLiteral("Key_QuoteLeft"); // backtick `, matches KeyMap's built-in default
+}
+
+QString KeyMapProfileStore::defaultCursorLockKeyString()
+{
+    return QStringLiteral("Key_F1"); // locks+hides the cursor; independent of the switch key above
 }
 
 QString KeyMapProfileStore::actionLabel(ControlActionKind kind)
@@ -184,10 +191,13 @@ bool KeyMapProfileStore::stringToKey(const QString &s, int *outValue, bool *outI
     return false;
 }
 
-QString KeyMapProfileStore::toJson(const QString &switchKey, const QVector<ControlNode> &nodes)
+QString KeyMapProfileStore::toJson(const QString &switchKey, const QString &cursorLockKey, const QVector<ControlNode> &nodes)
 {
     QJsonObject root;
     root.insert("switchKey", switchKey.isEmpty() ? defaultSwitchKeyString() : switchKey);
+    // Read by InputConvertGame::loadKeyMap() directly - not part of KeyMap's
+    // own node schema, since it toggles cursor grab/hide rather than a touch.
+    root.insert("cursorLockKey", cursorLockKey.isEmpty() ? defaultCursorLockKeyString() : cursorLockKey);
 
     // At most one FreeLook/AimPanShoot node is meaningful (KeyMap only has a
     // single mouseMoveMap slot) - the editor enforces this, but stay
@@ -274,7 +284,8 @@ QString KeyMapProfileStore::toJson(const QString &switchKey, const QVector<Contr
     return QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Indented));
 }
 
-bool KeyMapProfileStore::fromJson(const QString &json, QString &switchKey, QVector<ControlNode> &nodes, QString *error)
+bool KeyMapProfileStore::fromJson(const QString &json, QString &switchKey, QString &cursorLockKey, QVector<ControlNode> &nodes,
+                                   QString *error)
 {
     nodes.clear();
 
@@ -289,6 +300,9 @@ bool KeyMapProfileStore::fromJson(const QString &json, QString &switchKey, QVect
 
     QJsonObject root = doc.object();
     switchKey = root.value("switchKey").toString(defaultSwitchKeyString());
+    // Absent in profiles saved before this field existed - fall back to F1
+    // rather than leaving the lock permanently unbound.
+    cursorLockKey = root.value("cursorLockKey").toString(defaultCursorLockKeyString());
 
     ControlNode lookNode;
     bool haveLookNode = false;

@@ -13,6 +13,7 @@
 #include <QVBoxLayout>
 
 #include "controlinspectordialog.h"
+#include "editmodeoverlay.h"
 #include "gamecontrolmarker.h"
 #include "gamecontrolseditor.h"
 #include "videoform.h"
@@ -105,6 +106,21 @@ void GameControlsEditor::buildUi()
     m_switchKeyCapture->setBoundKeyString(KeyMapProfileStore::defaultSwitchKeyString());
     switchLayout->addWidget(m_switchKeyCapture);
     layout->addWidget(switchRow);
+    connect(m_switchKeyCapture, &KeyCaptureButton::keyChanged, this, [this](const QString &) { setDirty(true); });
+
+    // Deliberately a *separate* key from the touch-mode toggle above: this
+    // one only grabs+hides the cursor (BlueStacks' "enter/exit shooting
+    // mode"), so `` ` `` can stay a plain focus switch while a dedicated key
+    // (F1 by default) is the one that locks the mouse for aiming.
+    auto *lockRow = new QWidget(this);
+    auto *lockLayout = new QHBoxLayout(lockRow);
+    lockLayout->setContentsMargins(0, 0, 0, 0);
+    lockLayout->addWidget(new QLabel(tr("Lock/hide cursor:"), lockRow));
+    m_cursorLockKeyCapture = new KeyCaptureButton(lockRow);
+    m_cursorLockKeyCapture->setBoundKeyString(KeyMapProfileStore::defaultCursorLockKeyString());
+    lockLayout->addWidget(m_cursorLockKeyCapture);
+    layout->addWidget(lockRow);
+    connect(m_cursorLockKeyCapture, &KeyCaptureButton::keyChanged, this, [this](const QString &) { setDirty(true); });
 
     auto *addLabel = new QLabel(tr("Add controls"), this);
     addLabel->setStyleSheet("font-weight: bold; margin-top: 8px;");
@@ -140,13 +156,54 @@ void GameControlsEditor::setVideoForm(VideoForm *videoForm)
 void GameControlsEditor::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
+    ensureOverlay();
     relayoutMarkers();
+}
+
+void GameControlsEditor::hideEvent(QHideEvent *event)
+{
+    // Tear the click-shield down so the mirrored screen is fully live again
+    // as soon as the editor panel isn't visible.
+    if (m_overlay) {
+        m_overlay->deleteLater();
+    }
+    QWidget::hideEvent(event);
+}
+
+void GameControlsEditor::ensureOverlay()
+{
+    if (m_overlay || !m_videoForm) {
+        return;
+    }
+    QWidget *surface = m_videoForm->gameControlsSurface();
+    if (!surface) {
+        return;
+    }
+    m_overlay = new EditModeOverlay(surface);
+    m_overlay->setGeometry(surface->rect());
+    m_overlay->show();
+    m_overlay->lower(); // stay under GameControlMarker children, above raw video
+    m_overlay->setDirty(m_dirty);
+    connect(m_overlay, &EditModeOverlay::saveRequested, this, &GameControlsEditor::onSaveProfile);
+    connect(m_overlay, &EditModeOverlay::cancelRequested, this, &GameControlsEditor::onCancelEdits);
+    connect(m_overlay, &EditModeOverlay::controlDropped, this, &GameControlsEditor::handleControlDropped);
+}
+
+void GameControlsEditor::setDirty(bool dirty)
+{
+    m_dirty = dirty;
+    if (m_overlay) {
+        m_overlay->setDirty(dirty);
+    }
 }
 
 bool GameControlsEditor::eventFilter(QObject *watched, QEvent *event)
 {
     if (event->type() == QEvent::Resize && m_videoForm && watched == m_videoForm->gameControlsSurface()) {
         relayoutMarkers();
+        if (m_overlay) {
+            m_overlay->setGeometry(m_videoForm->gameControlsSurface()->rect());
+        }
     }
     return QWidget::eventFilter(watched, event);
 }
@@ -176,24 +233,29 @@ void GameControlsEditor::onProfileChanged(int index)
     if (index <= 0) {
         m_currentProfileName.clear();
         m_switchKeyCapture->setBoundKeyString(KeyMapProfileStore::defaultSwitchKeyString());
+        m_cursorLockKeyCapture->setBoundKeyString(KeyMapProfileStore::defaultCursorLockKeyString());
+        setDirty(false);
         return;
     }
 
     const QString name = m_profileCombo->itemText(index);
     QString switchKey;
+    QString cursorLockKey;
     QVector<ControlNode> nodes;
     QString error;
-    if (!KeyMapProfileStore::loadProfile(name, switchKey, nodes, &error)) {
+    if (!KeyMapProfileStore::loadProfile(name, switchKey, cursorLockKey, nodes, &error)) {
         QMessageBox::warning(this, tr("Controls editor"), tr("Could not load profile: %1").arg(error));
         return;
     }
 
     m_currentProfileName = name;
     m_switchKeyCapture->setBoundKeyString(switchKey);
+    m_cursorLockKeyCapture->setBoundKeyString(cursorLockKey);
     for (const ControlNode &node : nodes) {
         addMarkerForNode(node);
     }
     relayoutMarkers();
+    setDirty(false);
 }
 
 void GameControlsEditor::onNewProfile()
@@ -211,10 +273,12 @@ void GameControlsEditor::onNewProfile()
     clearMarkers();
     m_currentProfileName = name;
     m_switchKeyCapture->setBoundKeyString(KeyMapProfileStore::defaultSwitchKeyString());
+    m_cursorLockKeyCapture->setBoundKeyString(KeyMapProfileStore::defaultCursorLockKeyString());
 
     QVector<ControlNode> empty;
     QString error;
-    if (!KeyMapProfileStore::saveProfile(name, m_switchKeyCapture->boundKeyString(), empty, &error)) {
+    if (!KeyMapProfileStore::saveProfile(name, m_switchKeyCapture->boundKeyString(), m_cursorLockKeyCapture->boundKeyString(), empty,
+                                          &error)) {
         QMessageBox::warning(this, tr("Controls editor"), tr("Could not create profile: %1").arg(error));
         return;
     }
@@ -240,7 +304,8 @@ void GameControlsEditor::onSaveProfile()
     }
 
     QString error;
-    if (!KeyMapProfileStore::saveProfile(name, m_switchKeyCapture->boundKeyString(), nodes, &error)) {
+    if (!KeyMapProfileStore::saveProfile(name, m_switchKeyCapture->boundKeyString(), m_cursorLockKeyCapture->boundKeyString(), nodes,
+                                          &error)) {
         QMessageBox::warning(this, tr("Controls editor"), tr("Could not save profile: %1").arg(error));
         return;
     }
@@ -248,6 +313,23 @@ void GameControlsEditor::onSaveProfile()
     m_currentProfileName = name;
     reloadProfileList(name);
     applyLive();
+    setDirty(false);
+}
+
+void GameControlsEditor::onCancelEdits()
+{
+    // BlueStacks-style "Reset": discard unsaved edits and reload whatever is
+    // currently persisted on disk for this profile.
+    if (m_dirty
+        && QMessageBox::question(this, tr("Discard changes?"),
+                                  tr("Revert \"%1\" to its last saved state? Unsaved changes will be lost.")
+                                      .arg(m_currentProfileName.isEmpty() ? tr("(unsaved scheme)") : m_currentProfileName))
+               != QMessageBox::Yes) {
+        return;
+    }
+    clearMarkers();
+    onProfileChanged(m_profileCombo->currentIndex());
+    setDirty(false);
 }
 
 void GameControlsEditor::onDeleteProfile()
@@ -286,9 +368,10 @@ void GameControlsEditor::addMarkerForNode(const ControlNode &node)
     }
     auto *marker = new GameControlMarker(node, surface);
     marker->show();
+    marker->raise(); // stay clickable/draggable above the EditModeOverlay click-shield
     connect(marker, &GameControlMarker::editRequested, this, &GameControlsEditor::editMarker);
     connect(marker, &GameControlMarker::removeRequested, this, &GameControlsEditor::removeMarker);
-    connect(marker, &GameControlMarker::moved, this, [this](GameControlMarker *) { m_dirty = true; });
+    connect(marker, &GameControlMarker::moved, this, [this](GameControlMarker *) { setDirty(true); });
     m_markers.push_back(marker);
     marker->relayout(surface->size());
 }
@@ -345,7 +428,7 @@ void GameControlsEditor::handleControlDropped(ControlActionKind kind, QPointF no
     }
 
     addMarkerForNode(dialog.result());
-    m_dirty = true;
+    setDirty(true);
 }
 
 void GameControlsEditor::editMarker(GameControlMarker *marker)
@@ -358,7 +441,7 @@ void GameControlsEditor::editMarker(GameControlMarker *marker)
         return;
     }
     marker->setNode(dialog.result());
-    m_dirty = true;
+    setDirty(true);
 }
 
 void GameControlsEditor::removeMarker(GameControlMarker *marker)
@@ -368,7 +451,7 @@ void GameControlsEditor::removeMarker(GameControlMarker *marker)
     }
     m_markers.removeAll(QPointer<GameControlMarker>(marker));
     marker->deleteLater();
-    m_dirty = true;
+    setDirty(true);
 }
 
 void GameControlsEditor::applyLive()
@@ -383,6 +466,5 @@ void GameControlsEditor::applyLive()
             nodes.push_back(marker->node());
         }
     }
-    device->updateScript(KeyMapProfileStore::toJson(m_switchKeyCapture->boundKeyString(), nodes));
-    m_dirty = false;
+    device->updateScript(KeyMapProfileStore::toJson(m_switchKeyCapture->boundKeyString(), m_cursorLockKeyCapture->boundKeyString(), nodes));
 }
