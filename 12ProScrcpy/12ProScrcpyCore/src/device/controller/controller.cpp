@@ -326,8 +326,21 @@ void Controller::sendRealTouch(int slot, AndroidMotioneventAction action, QPoint
     int rawX = 0;
     int rawY = 0;
     if (frameSize.width() > 0 && frameSize.height() > 0) {
-        rawX = qBound(0, static_cast<int>(qRound(framePos.x() * static_cast<double>(profile.xMax) / frameSize.width())), profile.xMax);
-        rawY = qBound(0, static_cast<int>(qRound(framePos.y() * static_cast<double>(profile.yMax) / frameSize.height())), profile.yMax);
+        const bool frameIsLandscape = frameSize.width() > frameSize.height();
+        if (frameIsLandscape) {
+            // Touch panel's native coordinate space is portrait; when the
+            // mirrored frame is landscape, axes must be swapped (and one
+            // flipped) before scaling to native panel coords, or Android's
+            // real rotation-correction double-applies the transform.
+            // Empirically derived and verified against on-device tap tests.
+            double rx = framePos.y() * static_cast<double>(profile.xMax) / frameSize.height();
+            double ry = profile.yMax - (framePos.x() * static_cast<double>(profile.yMax) / frameSize.width());
+            rawX = qBound(0, static_cast<int>(qRound(rx)), profile.xMax);
+            rawY = qBound(0, static_cast<int>(qRound(ry)), profile.yMax);
+        } else {
+            rawX = qBound(0, static_cast<int>(qRound(framePos.x() * static_cast<double>(profile.xMax) / frameSize.width())), profile.xMax);
+            rawY = qBound(0, static_cast<int>(qRound(framePos.y() * static_cast<double>(profile.yMax) / frameSize.height())), profile.yMax);
+        }
     }
 
     switch (action) {
