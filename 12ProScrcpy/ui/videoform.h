@@ -5,7 +5,7 @@
 #include <QTimer>
 #include <QWidget>
 
-#include "../QtScrcpyCore/include/QtScrcpyCore.h"
+#include "../12ProScrcpyCore/include/QtScrcpyCore.h"
 
 namespace Ui
 {

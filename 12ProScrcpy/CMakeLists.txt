@@ -415,5 +415,5 @@ add_subdirectory(12ProScrcpyCore)
 # Qt
 target_link_libraries(${PROJECT_NAME} PRIVATE
     ${LINK_LIBS}
-    12ProScrcpyCore
+    QtScrcpyCore
 )
