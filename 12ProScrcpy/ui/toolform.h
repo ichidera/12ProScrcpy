@@ -4,7 +4,7 @@
 #include <QPointer>
 #include <QWidget>
 
-#include "../12ProScrcpyCore/include/QtScrcpyCore.h"
+#include "../QtScrcpyCore/include/QtScrcpyCore.h"
 #include "magneticwidget.h"
 
 namespace Ui
@@ -23,6 +23,9 @@ public:
 
     void setSerial(const QString& serial);
     bool isHost();
+    // Needed so the App Control panel can host markers on the mirrored
+    // screen and hot-apply saved schemes.
+    void setVideoForm(class VideoForm *videoForm);
 
 protected:
     void mousePressEvent(QMouseEvent *event);
@@ -46,14 +49,13 @@ private slots:
     void on_expandNotifyBtn_clicked();
     void on_expandSettingsBtn_clicked();
     void on_rotateBtn_clicked();
-    void on_touchBtn_clicked();
+    void on_appControlBtn_clicked();
     void on_cameraTorchBtn_clicked();
     void on_cameraZoomOutBtn_clicked();
     void on_cameraZoomInBtn_clicked();
     void on_groupControlBtn_clicked();
     void on_openScreenBtn_clicked();
     void on_clipboardBtn_clicked();
-    void on_cursorLockBtn_clicked();
 
 private:
     void initStyle();
@@ -64,10 +66,10 @@ private:
     Ui::ToolForm *ui;
     QPoint m_dragPosition;
     QString m_serial;
-    bool m_showTouch = false;
+    QPointer<class VideoForm> m_videoForm;
+    QPointer<class GameControlsEditor> m_gameControlsEditor;
     bool m_cameraTorch = false;
     bool m_isHost = false;
-    bool m_cursorLockState = false; // mirrors VideoForm::m_cursorLockActive
 };
 
 #endif // TOOLFORM_H

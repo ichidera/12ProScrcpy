@@ -62,24 +62,6 @@ void InputConvertGame::wheelEvent(const QWheelEvent *from, const QSize &frameSiz
 
 void InputConvertGame::keyEvent(const QKeyEvent *from, const QSize &frameSize, const QSize &showSize)
 {
-    // ── Cursor-lock key (F1 by default, configurable) ──────────────────────
-    // Fires on KeyPress only; toggles cursor lock + visibility independently
-    // of the keymap's own switch key, so it always works in any game.
-    if (from->key() == m_cursorLockKey && !from->isAutoRepeat()) {
-        if (QEvent::KeyPress == from->type()) {
-            m_cursorLocked = !m_cursorLocked;
-            // Drive the same grab+cursor machinery the keymap switch uses.
-            // grabCursor(true)  = confine mouse to the video widget rect.
-            // hideMouseCursor() = blank/cross cursor toggle.
-#ifdef QT_NO_DEBUG
-            emit grabCursor(m_cursorLocked);
-#endif
-            hideMouseCursor(m_cursorLocked);
-            qInfo() << QString("cursor lock: %1").arg(m_cursorLocked ? "LOCKED" : "FREE");
-        }
-        return;  // never pass the lock key to the device
-    }
-
     // 处理开关按键
     if (m_keyMap.isSwitchOnKeyboard() && m_keyMap.getSwitchKey() == from->key()) {
         if (QEvent::KeyPress != from->type()) {
@@ -744,11 +726,6 @@ bool InputConvertGame::switchGameMap()
     }
 
     return m_gameMap;
-}
-
-void InputConvertGame::setCursorLockKey(int qtKey)
-{
-    m_cursorLockKey = qtKey;
 }
 
 void InputConvertGame::hideMouseCursor(bool hide)

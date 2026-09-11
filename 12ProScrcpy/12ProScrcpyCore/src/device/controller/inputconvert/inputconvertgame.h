@@ -26,12 +26,6 @@ public:
 
     void loadKeyMap(const QString &json);
 
-    // Cursor-lock toggle key (default Qt::Key_F1).
-    // Pressing this locks/hides the cursor (game aim mode); pressing again
-    // unlocks/restores it.  Works independently of the keymap switch key.
-    void setCursorLockKey(int qtKey);
-    int  cursorLockKey() const { return m_cursorLockKey; }
-
 protected:
     void updateSize(const QSize &frameSize, const QSize &showSize);
     void sendTouchDownEvent(int id, QPointF pos);
@@ -91,8 +85,6 @@ private:
     QSize m_frameSize;
     QSize m_showSize;
     bool m_gameMap = false;
-    bool m_cursorLocked = false;       // true = cursor locked via lock-key path
-    int  m_cursorLockKey = Qt::Key_F1; // configurable; default F1
     bool m_needBackMouseMove = false;
     int m_multiTouchID[MULTI_TOUCH_MAX_NUM] = { 0 };
     KeyMap m_keyMap;

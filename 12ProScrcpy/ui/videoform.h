@@ -5,7 +5,7 @@
 #include <QTimer>
 #include <QWidget>
 
-#include "../12ProScrcpyCore/include/QtScrcpyCore.h"
+#include "../QtScrcpyCore/include/QtScrcpyCore.h"
 
 namespace Ui
 {
@@ -36,10 +36,9 @@ public:
     void switchFullScreen();
     bool isHost();
 
-    // Change the cursor-lock key at runtime (from dialog/settings).
-    // Also re-installs the QShortcut so the new key is active immediately.
-    void setCursorLockKey(int qtKey);
-    int  cursorLockKey() const { return m_cursorLockKey; }
+    // App Control (in-app keymap editor) support.
+    void setGameControlsEditor(class GameControlsEditor *editor);
+    QWidget *gameControlsSurface();
 
 private:
     void onFrame(int width, int height, uint8_t* dataY, uint8_t* dataU, uint8_t* dataV,
@@ -57,7 +56,6 @@ private:
     void showToolForm(bool show = true);
     void moveCenter();
     void installShortcut();
-    void installCursorLockShortcut(); // (re-)installs the cursor-lock key shortcut
     QRect getScreenRect();
 
 protected:
@@ -88,6 +86,7 @@ private:
     // ui
     Ui::videoForm *ui;
     QPointer<ToolForm> m_toolForm;
+    QPointer<class GameControlsEditor> m_gameControlsEditor;
     QPointer<QWidget> m_loadingWidget;
     QPointer<QYUVOpenGLWidget> m_videoWidget;
 
@@ -95,11 +94,6 @@ private:
     QPointer<MetalVideoWidget> m_metalWidget;
 
     QPointer<QLabel> m_fpsLabel;
-
-    // cursor-lock
-    int m_cursorLockKey = 0x01000030; // Qt::Key_F1 default
-    bool m_cursorLockActive = false;
-    QPointer<QShortcut> m_cursorLockShortcut;
 
     //inside member
     QSize m_frameSize;

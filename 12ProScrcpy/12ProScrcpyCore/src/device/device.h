@@ -1,4 +1,4 @@
-#ifndef DEVICE_H
+﻿#ifndef DEVICE_H
 #define DEVICE_H
 
 #include <set>
@@ -81,7 +81,6 @@ public:
 
     void updateScript(QString script) override;
     bool isCurrentCustomKeymap() override;
-    void setCursorLockKey(int qtKey) override;
 
 private:
     void initSignals();

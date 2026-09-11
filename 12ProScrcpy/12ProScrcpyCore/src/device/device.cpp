@@ -850,14 +850,6 @@ bool Device::isCurrentCustomKeymap()
     return m_controller->isCurrentCustomKeymap();
 }
 
-void Device::setCursorLockKey(int qtKey)
-{
-    if (!m_controller) {
-        return;
-    }
-    m_controller->setCursorLockKey(qtKey);
-}
-
 bool Device::saveFrame(int width, int height, uint8_t* dataRGB32)
 {
     if (!dataRGB32) {

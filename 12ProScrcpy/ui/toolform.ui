@@ -84,9 +84,9 @@
     </widget>
    </item>
    <item>
-    <widget class="QPushButton" name="touchBtn">
+    <widget class="QPushButton" name="appControlBtn">
      <property name="toolTip">
-      <string>touch switch</string>
+      <string>App control</string>
      </property>
      <property name="text">
       <string/>
@@ -190,19 +190,6 @@
      </property>
      <property name="text">
       <string/>
-     </property>
-    </widget>
-   </item>
-   <item>
-    <widget class="QPushButton" name="cursorLockBtn">
-     <property name="toolTip">
-      <string>cursor lock (F1) — click to change key</string>
-     </property>
-     <property name="text">
-      <string/>
-     </property>
-     <property name="checkable">
-      <bool>true</bool>
      </property>
     </widget>
    </item>

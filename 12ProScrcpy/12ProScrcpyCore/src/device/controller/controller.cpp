@@ -83,19 +83,6 @@ bool Controller::isCurrentCustomKeymap()
     return m_inputConvert->isCurrentCustomKeymap();
 }
 
-void Controller::setCursorLockKey(int qtKey)
-{
-    if (!m_inputConvert) {
-        return;
-    }
-    // InputConvertGame exposes setCursorLockKey; cast if possible.
-    auto *game = qobject_cast<InputConvertGame*>(m_inputConvert);
-    if (game) {
-        game->setCursorLockKey(qtKey);
-    }
-}
-
-
 void Controller::postBackOrScreenOn(bool down)
 {
     ControlMsg *controlMsg = new ControlMsg(ControlMsg::CMT_BACK_OR_SCREEN_ON);
@@ -108,54 +95,37 @@ void Controller::postBackOrScreenOn(bool down)
 
 void Controller::postGoHome()
 {
-    // uinput-goodix's KEY_HOME registers at the kernel input layer (confirmed
-    // via getevent) but does not translate into an actual Home navigation
-    // action - it's the touchscreen's gesture-wake virtual device, not a
-    // general-purpose nav key source. Use the framework fallback instead,
-    // same as AppSwitch/Copy/Cut.
     postKeyCodeClick(AKEYCODE_HOME);
 }
 
 void Controller::postGoMenu()
 {
-    // see postGoHome() - same uinput-goodix limitation applies to KEY_MENU
     postKeyCodeClick(AKEYCODE_MENU);
 }
 
 void Controller::postGoBack()
 {
-    // see postGoHome() - same uinput-goodix limitation applies to KEY_BACK
     postKeyCodeClick(AKEYCODE_BACK);
 }
 
 void Controller::postAppSwitch()
 {
-    // no confirmed hardware node for AppSwitch on this device - framework fallback
     postKeyCodeClick(AKEYCODE_APP_SWITCH);
 }
 
 void Controller::postPower()
 {
-    ensureRealTouchSession();
-    if (m_realTouchSession && m_realTouchSession->isRunning()) {
-        m_realTouchSession->pressPower();
-    }
+    postKeyCodeClick(AKEYCODE_POWER);
 }
 
 void Controller::postVolumeUp()
 {
-    ensureRealTouchSession();
-    if (m_realTouchSession && m_realTouchSession->isRunning()) {
-        m_realTouchSession->pressVolumeUp();
-    }
+    postKeyCodeClick(AKEYCODE_VOLUME_UP);
 }
 
 void Controller::postVolumeDown()
 {
-    ensureRealTouchSession();
-    if (m_realTouchSession && m_realTouchSession->isRunning()) {
-        m_realTouchSession->pressVolumeDown();
-    }
+    postKeyCodeClick(AKEYCODE_VOLUME_DOWN);
 }
 
 void Controller::copy()
@@ -413,15 +383,17 @@ bool Controller::sendControl(const QByteArray &buffer)
 
 void Controller::postKeyCodeClick(AndroidKeycode keycode)
 {
-    sendRealKeyEvent(static_cast<int>(keycode));
-}
-
-void Controller::sendRealKeyEvent(int androidKeycode)
-{
-    ensureRealTouchSession();
-    if (!m_realTouchSession || !m_realTouchSession->isRunning()) {
-        qWarning() << "Controller::sendRealKeyEvent: sendevent session not running, dropping key event";
+    ControlMsg *controlEventDown = new ControlMsg(ControlMsg::CMT_INJECT_KEYCODE);
+    if (!controlEventDown) {
         return;
     }
-    m_realTouchSession->pressKeyEvent(androidKeycode);
+    controlEventDown->setInjectKeycodeMsgData(AKEY_EVENT_ACTION_DOWN, keycode, 0, AMETA_NONE);
+    postControlMsg(controlEventDown);
+
+    ControlMsg *controlEventUp = new ControlMsg(ControlMsg::CMT_INJECT_KEYCODE);
+    if (!controlEventUp) {
+        return;
+    }
+    controlEventUp->setInjectKeycodeMsgData(AKEY_EVENT_ACTION_UP, keycode, 0, AMETA_NONE);
+    postControlMsg(controlEventUp);
 }

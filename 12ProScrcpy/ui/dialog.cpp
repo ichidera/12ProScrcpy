@@ -31,8 +31,6 @@
 #include "../util/winutils.h"
 #endif
 
-QString s_keyMapPath = "";
-
 namespace {
 class ComboBoxItemDelegate final : public QStyledItemDelegate
 {
@@ -47,18 +45,6 @@ public:
     }
 };
 } // namespace
-
-const QString &getKeyMapPath()
-{
-    if (s_keyMapPath.isEmpty()) {
-        s_keyMapPath = QString::fromLocal8Bit(qgetenv("QTSCRCPY_KEYMAP_PATH"));
-        QFileInfo fileInfo(s_keyMapPath);
-        if (s_keyMapPath.isEmpty() || !fileInfo.isDir()) {
-            s_keyMapPath = QCoreApplication::applicationDirPath() + "/keymap";
-        }
-    }
-    return s_keyMapPath;
-}
 
 Dialog::Dialog(QWidget *parent) : QWidget(parent), ui(new Ui::Widget)
 {
@@ -533,23 +519,6 @@ void Dialog::delayMs(int ms)
     }
 }
 
-QString Dialog::getGameScript(const QString &fileName)
-{
-    if (fileName.isEmpty()) {
-        return "";
-    }
-
-    QFile loadFile(getKeyMapPath() + "/" + fileName);
-    if (!loadFile.open(QIODevice::ReadOnly)) {
-        outLog("open file failed:" + fileName, true);
-        return "";
-    }
-
-    QString ret = loadFile.readAll();
-    loadFile.close();
-    return ret;
-}
-
 void Dialog::slotActivated(QSystemTrayIcon::ActivationReason reason)
 {
     switch (reason) {
@@ -593,9 +562,6 @@ void Dialog::updateVideoSourceUi()
     ui->refreshCameraBtn->setEnabled(camera);
     ui->closeScreenCheck->setEnabled(!camera);
     ui->stayAwakeCheck->setEnabled(!camera);
-    ui->gameBox->setEnabled(!camera);
-    ui->refreshGameScriptBtn->setEnabled(!camera);
-    ui->applyScriptBtn->setEnabled(!camera);
     ui->installSndcpyBtn->setEnabled(!camera);
     ui->startAudioBtn->setEnabled(!camera);
     if (m_advancedDisplayGroup) {
@@ -647,7 +613,10 @@ void Dialog::on_startServerBtn_clicked()
     params.serverLocalPath = getServerPath();
     params.serverRemotePath = Config::getInstance().getServerPath();
     params.pushFilePath = Config::getInstance().getPushFilePath();
-    params.gameScript = camera ? QString() : getGameScript(ui->gameBox->currentText());
+    // Game control schemes are no longer picked before connecting - they're
+    // authored and hot-applied in-app via the "App control" panel (see
+    // GameControlsEditor) once the mirror session is up.
+    params.gameScript = QString();
     params.logLevel = Config::getInstance().getLogLevel();
     // Apply an encoder preset (when a preset mode is selected) or the ini default.
     const int codecModeIndex = ui->codecModeBox->currentIndex();
@@ -1149,35 +1118,6 @@ void Dialog::on_clearOut_clicked()
 void Dialog::on_stopAllServerBtn_clicked()
 {
     qsc::IDeviceManage::getInstance().disconnectAllDevice();
-}
-
-void Dialog::on_refreshGameScriptBtn_clicked()
-{
-    ui->gameBox->clear();
-    QDir dir(getKeyMapPath());
-    if (!dir.exists()) {
-        outLog("keymap directory not find", true);
-        return;
-    }
-    dir.setFilter(QDir::Files | QDir::NoSymLinks);
-    QFileInfoList list = dir.entryInfoList();
-    QFileInfo fileInfo;
-    int size = list.size();
-    for (int i = 0; i < size; ++i) {
-        fileInfo = list.at(i);
-        ui->gameBox->addItem(fileInfo.fileName());
-    }
-}
-
-void Dialog::on_applyScriptBtn_clicked()
-{
-    auto curSerial = ui->serialBox->currentText().trimmed();
-    auto device = qsc::IDeviceManage::getInstance().getDevice(curSerial);
-    if (!device) {
-        return;
-    }
-
-    device->updateScript(getGameScript(ui->gameBox->currentText()));
 }
 
 void Dialog::on_recordScreenCheck_clicked(bool checked)

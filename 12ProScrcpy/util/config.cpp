@@ -1,4 +1,4 @@
-#include <QCoreApplication>
+﻿#include <QCoreApplication>
 #include <QFileInfo>
 #include <QSettings>
 #include <QDebug>
@@ -114,9 +114,6 @@
 #define COMMON_CAMERA_FACING_KEY "CameraFacing"
 #define COMMON_CAMERA_FACING_DEF 0
 
-#define COMMON_CURSOR_LOCK_KEY_KEY "CursorLockKey"
-#define COMMON_CURSOR_LOCK_KEY_DEF 0x01000030  // Qt::Key_F1
-
 // device config
 #define SERIAL_WINDOW_RECT_KEY_X "WindowRectX"
 #define SERIAL_WINDOW_RECT_KEY_Y "WindowRectY"
@@ -212,7 +209,6 @@ void Config::setUserBootConfig(const UserBootConfig &config)
     m_userData->setValue("VdDestroyContent", config.vdDestroyContent);
     m_userData->setValue("KeepActive", config.keepActive);
     m_userData->setValue("StartApp", config.startApp);
-    m_userData->setValue(COMMON_CURSOR_LOCK_KEY_KEY, config.cursorLockKey);
     m_userData->endGroup();
     m_userData->sync();
 }
@@ -258,7 +254,6 @@ UserBootConfig Config::getUserBootConfig()
     config.vdDestroyContent = m_userData->value("VdDestroyContent", true).toBool();
     config.keepActive = m_userData->value("KeepActive", false).toBool();
     config.startApp = m_userData->value("StartApp", "").toString();
-    config.cursorLockKey = m_userData->value(COMMON_CURSOR_LOCK_KEY_KEY, COMMON_CURSOR_LOCK_KEY_DEF).toInt();
     m_userData->endGroup();
     return config;
 }

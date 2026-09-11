@@ -186,6 +186,14 @@ set(QC_UI_SOURCES
     ui/encoderpreset.cpp
     ui/presetconfigdialog.h
     ui/presetconfigdialog.cpp
+    ui/keymapprofilestore.h
+    ui/keymapprofilestore.cpp
+    ui/gamecontrolmarker.h
+    ui/gamecontrolmarker.cpp
+    ui/controlinspectordialog.h
+    ui/controlinspectordialog.cpp
+    ui/gamecontrolseditor.h
+    ui/gamecontrolseditor.cpp
     render/qyuvopenglwidget.h
     render/qyuvopenglwidget.cpp
 )
@@ -407,5 +415,5 @@ add_subdirectory(12ProScrcpyCore)
 # Qt
 target_link_libraries(${PROJECT_NAME} PRIVATE
     ${LINK_LIBS}
-    QtScrcpyCore
+    12ProScrcpyCore
 )

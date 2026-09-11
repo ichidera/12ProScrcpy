@@ -11,7 +11,7 @@
 
 
 #include "adbprocess.h"
-#include "../12ProScrcpyCore/include/QtScrcpyCore.h"
+#include "../QtScrcpyCore/include/QtScrcpyCore.h"
 #include "audio/audiooutput.h"
 #include "presetconfigdialog.h"
 
@@ -55,8 +55,6 @@ private slots:
     void on_stopAdbBtn_clicked();
     void on_clearOut_clicked();
     void on_stopAllServerBtn_clicked();
-    void on_refreshGameScriptBtn_clicked();
-    void on_applyScriptBtn_clicked();
     void on_recordScreenCheck_clicked(bool checked);
     void on_usbConnectBtn_clicked();
     void on_wifiConnectBtn_clicked();
@@ -88,7 +86,6 @@ private:
     void updateBootConfig(bool toView = true);
     void execAdbCmd();
     void delayMs(int ms);
-    QString getGameScript(const QString &fileName);
     void slotActivated(QSystemTrayIcon::ActivationReason reason);
     int findDeviceFromeSerialBox(bool wifi);
     quint32 getBitRate();
