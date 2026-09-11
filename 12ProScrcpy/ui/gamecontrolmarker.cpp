@@ -97,7 +97,7 @@ void GameControlMarker::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton) {
         m_dragging = true;
-        m_dragStartMouse = event->globalPos();
+        m_dragStartMouse = event->globalPosition().toPoint();
         m_dragStartWidgetPos = pos();
     }
 }
@@ -107,7 +107,7 @@ void GameControlMarker::mouseMoveEvent(QMouseEvent *event)
     if (!m_dragging || !parentWidget()) {
         return;
     }
-    const QPoint delta = event->globalPos() - m_dragStartMouse;
+    const QPoint delta = event->globalPosition().toPoint() - m_dragStartMouse;
     QPoint newPos = m_dragStartWidgetPos + delta;
 
     const QSize surface = parentWidget()->size();

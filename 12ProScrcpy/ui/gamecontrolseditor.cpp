@@ -16,7 +16,7 @@
 #include "gamecontrolmarker.h"
 #include "gamecontrolseditor.h"
 #include "videoform.h"
-#include "../QtScrcpyCore/include/QtScrcpyCore.h"
+#include "../12ProScrcpyCore/include/QtScrcpyCore.h"
 
 namespace
 {
@@ -37,14 +37,14 @@ protected:
     void mousePressEvent(QMouseEvent *event) override
     {
         if (event->button() == Qt::LeftButton) {
-            m_pressPos = event->pos();
+            m_pressPos = event->position().toPoint();
         }
         QToolButton::mousePressEvent(event);
     }
 
     void mouseMoveEvent(QMouseEvent *event) override
     {
-        if ((event->buttons() & Qt::LeftButton) && (event->pos() - m_pressPos).manhattanLength() > 12) {
+        if ((event->buttons() & Qt::LeftButton) && (event->position().toPoint() - m_pressPos).manhattanLength() > 12) {
             auto *drag = new QDrag(this);
             auto *mime = new QMimeData();
             mime->setData(kGameControlMimeType, QByteArray::number(static_cast<int>(m_kind)));

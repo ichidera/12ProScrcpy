@@ -718,7 +718,7 @@ void VideoForm::mousePressEvent(QMouseEvent *event)
 #endif
 
     QWidget *vw = videoWidget();
-    if (vw && vw->geometry().contains(event->pos())) {
+    if (vw && vw->geometry().contains(event->position().toPoint())) {
         if (!device) {
             return;
         }
@@ -792,7 +792,7 @@ void VideoForm::mouseMoveEvent(QMouseEvent *event)
 #endif
     auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
     QWidget *vw = videoWidget();
-    if (vw && vw->geometry().contains(event->pos())) {
+    if (vw && vw->geometry().contains(event->position().toPoint())) {
         if (!device) {
             return;
         }
@@ -811,7 +811,7 @@ void VideoForm::mouseDoubleClickEvent(QMouseEvent *event)
 {
     auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
     QWidget *vw = videoWidget();
-    if (event->button() == Qt::LeftButton && vw && !vw->geometry().contains(event->pos())) {
+    if (event->button() == Qt::LeftButton && vw && !vw->geometry().contains(event->position().toPoint())) {
         if (!isMaximized()) {
             removeBlackRect();
         }
@@ -821,7 +821,7 @@ void VideoForm::mouseDoubleClickEvent(QMouseEvent *event)
         emit device->postBackOrScreenOn(event->type() == QEvent::MouseButtonPress);
     }
 
-    if (vw && vw->geometry().contains(event->pos())) {
+    if (vw && vw->geometry().contains(event->position().toPoint())) {
         if (!device) {
             return;
         }
@@ -986,7 +986,7 @@ void VideoForm::dropEvent(QDropEvent *event)
         const int kindValue = event->mimeData()->data(kGameControlMimeType).toInt(&ok);
         QWidget *surface = videoWidget();
         if (ok && surface && surface->size().width() > 0 && surface->size().height() > 0) {
-            const QPoint localPos = surface->mapFrom(this, event->pos());
+            const QPoint localPos = surface->mapFrom(this, event->position().toPoint());
             const QPointF normPos(qBound(0.0, double(localPos.x()) / surface->width(), 1.0),
                                    qBound(0.0, double(localPos.y()) / surface->height(), 1.0));
             m_gameControlsEditor->handleControlDropped(static_cast<ControlActionKind>(kindValue), normPos);
