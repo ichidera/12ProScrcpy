@@ -135,8 +135,10 @@ private:
 GameControlsEditor::GameControlsEditor(const QString &serial, QWidget *parent)
     : QWidget(parent), m_serial(serial), m_interfaceId(KeyMapProfileStore::unknownInterfaceId())
 {
-    setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
-    setAttribute(Qt::WA_TranslucentBackground);
+    // Deliberately NOT a floating top-level window: this is always embedded
+    // as a page inside GameControlsPanel's stacked widget, so it opens "in
+    // place of" the quick-settings view instead of popping up as a second
+    // box elsewhere on screen.
     buildUi();
     reloadProfileList();
 }
@@ -158,7 +160,6 @@ QToolButton *GameControlsEditor::makeGlyphButton(QChar glyph, const QString &too
 void GameControlsEditor::buildUi()
 {
     setWindowTitle(tr("Controls editor"));
-    setMinimumWidth(272);
 
     auto *outer = new QVBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
@@ -206,8 +207,8 @@ void GameControlsEditor::buildUi()
                                   true, card);
     header->addWidget(help);
     header->addStretch(1);
-    auto *closeBtn = makeGlyphButton(QChar(kIconClose), tr("Close"), true, card);
-    connect(closeBtn, &QToolButton::clicked, this, &QWidget::hide);
+    auto *closeBtn = makeGlyphButton(QChar(kIconClose), tr("Back to Game controls"), true, card);
+    connect(closeBtn, &QToolButton::clicked, this, &GameControlsEditor::closeRequested);
     header->addWidget(closeBtn);
     root->addLayout(header);
 
@@ -264,8 +265,6 @@ void GameControlsEditor::buildUi()
     root->addLayout(actionsRow);
     connect(resetBtn, &QPushButton::clicked, this, &GameControlsEditor::onCancelEdits);
     connect(saveBtn, &QPushButton::clicked, this, &GameControlsEditor::onSaveProfile);
-
-    setFixedWidth(304);
 }
 
 QWidget *GameControlsEditor::buildControlSchemeSection()
@@ -464,8 +463,8 @@ void GameControlsEditor::ensureOverlay()
     m_overlay->show();
     m_overlay->lower(); // stay under GameControlMarker children, above raw video
     m_overlay->setDirty(m_dirty);
-    connect(m_overlay, &EditModeOverlay::saveRequested, this, &GameControlsEditor::onSaveProfile);
-    connect(m_overlay, &EditModeOverlay::cancelRequested, this, &GameControlsEditor::onCancelEdits);
+    // Save/Reset now live on this panel's own header/footer buttons, not on
+    // the overlay - it only still needs to relay palette drops.
     connect(m_overlay, &EditModeOverlay::controlDropped, this, &GameControlsEditor::handleControlDropped);
 }
 

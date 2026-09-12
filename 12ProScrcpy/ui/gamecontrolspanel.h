@@ -19,6 +19,7 @@ class QLabel;
 class QToolButton;
 class QDoubleSpinBox;
 class QPushButton;
+class QStackedWidget;
 
 // The compact "Game controls" quick-settings panel (Figma: Collapsed /
 // Scheme / Full settings states). This is what actually opens when the
@@ -26,6 +27,10 @@ class QPushButton;
 // button is what launches the full node-placement GameControlsEditor.
 //
 // Responsible for:
+//  - hosting BOTH the quick-settings view above and the full
+//    GameControlsEditor as two pages of the same stacked widget, so "Open
+//    controls editor" swaps this panel's own content in place rather than
+//    popping up a second floating window elsewhere on screen
 //  - the master "Game control" toggle: when on, the active scheme stays
 //    engaged for as long as the mirrored window has focus, instead of only
 //    while the switch key (` by default, unaffected either way) is pressed
@@ -50,6 +55,7 @@ public:
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
 
 private slots:
     void onInterfaceChanged(const QString &packageId, const QString &displayName);
@@ -60,6 +66,7 @@ private slots:
     void onSensitivityXChanged(double value);
     void onSensitivityYChanged(double value);
     void onOpenEditorClicked();
+    void onEditorClosed();
     void onEditorProfilesChanged(const QString &interfaceId);
     void onWindowActiveChanged(bool active);
 
@@ -84,6 +91,7 @@ private:
     QPointer<VideoForm> m_videoForm;
     GameInterfaceMonitor *m_ifaceMonitor = nullptr;
     QPointer<GameControlsEditor> m_editor;
+    QStackedWidget *m_stack = nullptr; // page 0: quick settings, page 1: m_editor
 
     QString m_interfaceId;
     QString m_interfaceDisplayName;

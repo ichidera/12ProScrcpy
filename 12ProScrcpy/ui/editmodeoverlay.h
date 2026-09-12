@@ -6,27 +6,25 @@
 
 #include "keymapprofilestore.h"
 
-class QPushButton;
 class QLabel;
 
 // Transparent-but-click-eating layer shown over the mirrored screen while a
-// control scheme is being edited (BlueStacks-style: while the Controls
-// editor panel is open, the phone screen underneath must not receive stray
-// clicks/drags, and a Save/Cancel bar floats over it). Sits as a child of
-// VideoForm::gameControlsSurface(), same geometry, stacked below any
-// GameControlMarker widgets so those stay draggable on top of it.
+// control scheme is being edited: while the Controls editor panel is open,
+// the phone screen underneath must not receive stray clicks/drags, and a
+// small status pill floats over it to explain why. Save/Reset live on the
+// Controls editor panel itself (see GameControlsEditor), not here. Sits as a
+// child of VideoForm::gameControlsSurface(), same geometry, stacked below
+// any GameControlMarker widgets so those stay draggable on top of it.
 class EditModeOverlay : public QWidget
 {
     Q_OBJECT
 public:
     explicit EditModeOverlay(QWidget *parent = nullptr);
 
-    // Enables/disables the Save button and tweaks the hint text.
+    // Tweaks the hint text between "editing" and "unsaved changes".
     void setDirty(bool dirty);
 
 signals:
-    void saveRequested();
-    void cancelRequested();
     // Re-emitted from dropEvent() when a palette action (see
     // kGameControlMimeType in gamecontrolseditor.h) is dropped on the
     // overlay - it's the topmost widget over the video once shown, so drops
@@ -50,8 +48,6 @@ private:
 private:
     QWidget *m_toolbar = nullptr;
     QLabel *m_hint = nullptr;
-    QPushButton *m_saveBtn = nullptr;
-    QPushButton *m_cancelBtn = nullptr;
 };
 
 #endif // EDITMODEOVERLAY_H

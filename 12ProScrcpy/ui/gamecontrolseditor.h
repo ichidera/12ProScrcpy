@@ -54,6 +54,13 @@ signals:
     // (and reload live data if the affected profile is the active one).
     void profilesChanged(const QString &interfaceId);
 
+    // The "✕" in this panel's own header was clicked. This widget is now
+    // always embedded as a page inside GameControlsPanel's stacked widget
+    // rather than being its own floating window, so "closing" just means
+    // "please show the quick-settings page again" - GameControlsPanel owns
+    // that transition, this widget doesn't hide/destroy itself.
+    void closeRequested();
+
 protected:
     void showEvent(QShowEvent *event) override;
     void hideEvent(QHideEvent *event) override;

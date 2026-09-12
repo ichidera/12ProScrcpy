@@ -3,10 +3,12 @@
 #include <QEvent>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QHideEvent>
 #include <QLabel>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QSlider>
+#include <QStackedWidget>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -93,15 +95,30 @@ bool GameControlsPanel::eventFilter(QObject *watched, QEvent *event)
     return QWidget::eventFilter(watched, event);
 }
 
+void GameControlsPanel::hideEvent(QHideEvent *event)
+{
+    QWidget::hideEvent(event);
+    // Always reopen on the quick-settings page next time, rather than
+    // silently resuming wherever the editor was left - that page is the
+    // "home" view of this panel.
+    if (m_stack) {
+        m_stack->setCurrentIndex(0);
+    }
+}
+
 void GameControlsPanel::buildUi()
 {
     auto *outer = new QVBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
 
-    auto *card = new QWidget(this);
+    m_stack = new QStackedWidget(this);
+    m_stack->setAttribute(Qt::WA_StyledBackground, false);
+    outer->addWidget(m_stack);
+
+    auto *card = new QWidget(m_stack);
     card->setObjectName("gcpCard");
     card->setAttribute(Qt::WA_StyledBackground, true);
-    outer->addWidget(card);
+    m_stack->addWidget(card); // page 0: quick settings (the editor becomes page 1, added lazily)
 
     setStyleSheet(
         "QWidget#gcpCard { background:#16181d; border:1px solid #262b33; border-radius:10px; }"
@@ -259,7 +276,7 @@ void GameControlsPanel::buildUi()
     connect(m_openEditorBtn, &QPushButton::clicked, this, &GameControlsPanel::onOpenEditorClicked);
     root->addWidget(m_openEditorBtn);
 
-    setFixedWidth(240);
+    setFixedWidth(300); // wide enough for both the quick-settings page and the editor's 3-column palette
 }
 
 void GameControlsPanel::onInterfaceChanged(const QString &packageId, const QString &displayName)
@@ -354,25 +371,25 @@ void GameControlsPanel::onSensitivityYChanged(double value)
 void GameControlsPanel::onOpenEditorClicked()
 {
     if (!m_editor) {
-        m_editor = new GameControlsEditor(m_serial, nullptr);
-        m_editor->setAttribute(Qt::WA_DeleteOnClose, false);
+        m_editor = new GameControlsEditor(m_serial, m_stack);
         m_editor->setVideoForm(m_videoForm);
         connect(m_editor, &GameControlsEditor::profilesChanged, this, &GameControlsPanel::onEditorProfilesChanged);
-    }
-
-    if (m_editor->isVisible()) {
-        m_editor->hide();
-        return;
+        connect(m_editor, &GameControlsEditor::closeRequested, this, &GameControlsPanel::onEditorClosed);
+        m_stack->addWidget(m_editor);
     }
 
     m_editor->setInterface(m_interfaceId, m_interfaceDisplayName);
     if (!m_currentProfileName.isEmpty()) {
         m_editor->selectProfile(m_currentProfileName);
     }
-    m_editor->move(pos().x() - m_editor->width() - 12, pos().y());
-    m_editor->show();
-    m_editor->raise();
-    m_editor->activateWindow();
+    // Swaps this panel's own content over to the editor - it's a page of
+    // the same window, not a second floating box elsewhere on screen.
+    m_stack->setCurrentWidget(m_editor);
+}
+
+void GameControlsPanel::onEditorClosed()
+{
+    m_stack->setCurrentIndex(0); // back to the quick-settings page
 }
 
 void GameControlsPanel::onEditorProfilesChanged(const QString &interfaceId)

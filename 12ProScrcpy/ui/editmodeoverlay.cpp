@@ -5,7 +5,6 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
-#include <QPushButton>
 #include <QWheelEvent>
 
 #include "editmodeoverlay.h"
@@ -23,38 +22,23 @@ EditModeOverlay::EditModeOverlay(QWidget *parent) : QWidget(parent)
     setCursor(Qt::ArrowCursor);
     setMouseTracking(true);
 
+    // Just a status pill - Save/Reset live on the Controls editor panel
+    // itself now, so there's nothing to click here.
     m_toolbar = new QWidget(this);
     m_toolbar->setStyleSheet("background: rgba(20,20,24,225); border-radius: 8px;");
     auto *row = new QHBoxLayout(m_toolbar);
-    row->setContentsMargins(12, 6, 10, 6);
-    row->setSpacing(10);
+    row->setContentsMargins(14, 7, 14, 7);
 
     m_hint = new QLabel(tr("Editing controls — screen input is paused"), m_toolbar);
     m_hint->setStyleSheet("color: #cbd5e1; font-size: 12px;");
-
-    m_cancelBtn = new QPushButton(tr("Cancel"), m_toolbar);
-    m_cancelBtn->setStyleSheet("QPushButton { background:#334155; color:white; padding:4px 14px; border-radius:4px; }"
-                                "QPushButton:hover { background:#475569; }");
-    m_saveBtn = new QPushButton(tr("Save"), m_toolbar);
-    m_saveBtn->setStyleSheet("QPushButton { background:#3b82f6; color:white; padding:4px 14px; border-radius:4px; }"
-                              "QPushButton:hover { background:#2563eb; }"
-                              "QPushButton:disabled { background:#1e3a5f; color:#94a3b8; }");
-    m_saveBtn->setEnabled(false);
-
     row->addWidget(m_hint);
-    row->addStretch();
-    row->addWidget(m_cancelBtn);
-    row->addWidget(m_saveBtn);
     m_toolbar->adjustSize();
-
-    connect(m_saveBtn, &QPushButton::clicked, this, &EditModeOverlay::saveRequested);
-    connect(m_cancelBtn, &QPushButton::clicked, this, &EditModeOverlay::cancelRequested);
 }
 
 void EditModeOverlay::setDirty(bool dirty)
 {
-    m_saveBtn->setEnabled(dirty);
     m_hint->setText(dirty ? tr("Unsaved changes — screen input is paused") : tr("Editing controls — screen input is paused"));
+    repositionToolbar();
 }
 
 void EditModeOverlay::repositionToolbar()
