@@ -26,3 +26,5 @@ docs/
 
 12PROSCRCPY.zip
 12ProScrcpy\12ProScrcpyCore\src\third_party
+data/Google-Playstore.csv
+playstore.db
