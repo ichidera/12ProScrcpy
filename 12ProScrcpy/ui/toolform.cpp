@@ -42,11 +42,7 @@ void ToolForm::setVideoForm(VideoForm *videoForm)
     if (!m_gameControlsPanel && !m_serial.isEmpty()) {
         m_gameControlsPanel = new GameControlsPanel(m_serial, nullptr);
         m_gameControlsPanel->setVideoForm(m_videoForm);
-        QPoint pos(this->x() - m_gameControlsPanel->sizeHint().width() - 8, this->y());
-        if (pos.x() < 0) {
-            pos.setX(0);
-        }
-        m_gameControlsPanel->move(pos);
+        m_gameControlsPanel->move(gameControlsPanelOpenPosition(m_gameControlsPanel->sizeHint()));
     } else if (m_gameControlsPanel) {
         m_gameControlsPanel->setVideoForm(m_videoForm);
     }
@@ -55,6 +51,34 @@ void ToolForm::setVideoForm(VideoForm *videoForm)
 bool ToolForm::isHost()
 {
     return m_isHost;
+}
+
+QPoint ToolForm::gameControlsPanelOpenPosition(const QSize &panelSize) const
+{
+    // "Outward" means away from the mirrored screen the toolbar is docked
+    // to, not always to one fixed side. Decide left-vs-right by comparing
+    // this toolbar's position against the video window's horizontal
+    // center: if the toolbar is sitting on the right half (right-docked),
+    // open further right; if it's on the left half (left-docked), open
+    // further left. Falls back to opening left of the toolbar if there's
+    // no video form yet to compare against.
+    const int gap = 8;
+    bool dockedRight = true;
+    if (m_videoForm) {
+        const int videoCenterX = m_videoForm->x() + m_videoForm->width() / 2;
+        dockedRight = this->x() >= videoCenterX;
+    }
+
+    QPoint pos;
+    if (dockedRight) {
+        pos = QPoint(this->x() + this->width() + gap, this->y());
+    } else {
+        pos = QPoint(this->x() - panelSize.width() - gap, this->y());
+        if (pos.x() < 0) {
+            pos.setX(0);
+        }
+    }
+    return pos;
 }
 
 void ToolForm::updateCameraMode()
@@ -284,11 +308,7 @@ void ToolForm::on_appControlBtn_clicked()
     if (m_gameControlsPanel->isVisible()) {
         m_gameControlsPanel->hide();
     } else {
-        QPoint pos(this->x() - m_gameControlsPanel->sizeHint().width() - 8, this->y());
-        if (pos.x() < 0) {
-            pos.setX(0);
-        }
-        m_gameControlsPanel->move(pos);
+        m_gameControlsPanel->move(gameControlsPanelOpenPosition(m_gameControlsPanel->sizeHint()));
         m_gameControlsPanel->show();
         m_gameControlsPanel->raise();
         m_gameControlsPanel->activateWindow();

@@ -61,6 +61,13 @@ private:
     void initStyle();
     void updateGroupControl();
     void updateCameraMode();
+    // Opens away from the mirrored screen rather than over it: compares
+    // this toolbar's current position against the video window it's
+    // docked to, and opens further out on whichever side the toolbar is
+    // actually sitting on (left-docked -> further left, right-docked ->
+    // further right), instead of always opening to the left regardless of
+    // dock side.
+    QPoint gameControlsPanelOpenPosition(const QSize &panelSize) const;
 
 private:
     Ui::ToolForm *ui;

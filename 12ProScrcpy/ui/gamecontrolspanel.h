@@ -2,6 +2,7 @@
 #define GAMECONTROLSPANEL_H
 
 #include <QPointer>
+#include <QTimer>
 #include <QVector>
 #include <QWidget>
 
@@ -96,6 +97,7 @@ private:
     bool m_onScreenVisible = true;
     int m_opacityPercent = 72;
     bool m_windowActive = false;
+    QTimer *m_opacityPersistDebounce = nullptr;
 
     // UI
     ToggleSwitch *m_masterToggle = nullptr;

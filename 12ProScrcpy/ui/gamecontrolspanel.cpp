@@ -76,8 +76,19 @@ void GameControlsPanel::setVideoForm(VideoForm *videoForm)
 
 bool GameControlsPanel::eventFilter(QObject *watched, QEvent *event)
 {
-    if (m_videoForm && watched == m_videoForm->gameControlsSurface() && event->type() == QEvent::Resize) {
-        relayoutOnScreenMarkers();
+    if (m_videoForm && watched == m_videoForm->gameControlsSurface()) {
+        if (event->type() == QEvent::Resize) {
+            relayoutOnScreenMarkers();
+        } else if (event->type() == QEvent::MouseButtonPress && isVisible()) {
+            // Tapping the mirrored screen while this compact panel is open
+            // dismisses it, matching expected transient-popup behavior -
+            // opening is solely a product of clicking the toolbar's
+            // control icon, and any tap elsewhere closes it again rather
+            // than leaving it parked open indefinitely. Doesn't consume
+            // the event, so the tap still reaches the normal touch-
+            // forwarding path underneath.
+            hide();
+        }
     }
     return QWidget::eventFilter(watched, event);
 }
@@ -286,12 +297,24 @@ void GameControlsPanel::onOpacityChanged(int value)
 {
     m_opacityPercent = value;
     m_opacityValueLabel->setText(QStringLiteral("%1%").arg(value));
-    persistSettings();
     for (const auto &marker : m_onScreenMarkers) {
         if (marker) {
             marker->setDisplayOpacityPercent(value);
         }
     }
+
+    // QSlider::valueChanged fires continuously while dragging (dozens of
+    // times per second) - persistSettings() forces a synchronous QSettings
+    // disk sync every call, so calling it directly here was the actual
+    // source of the lag: every drag tick blocked the UI thread on a file
+    // write. Debounce it instead - only persist once the slider has been
+    // quiet for a short moment, not on every single intermediate value.
+    if (!m_opacityPersistDebounce) {
+        m_opacityPersistDebounce = new QTimer(this);
+        m_opacityPersistDebounce->setSingleShot(true);
+        connect(m_opacityPersistDebounce, &QTimer::timeout, this, &GameControlsPanel::persistSettings);
+    }
+    m_opacityPersistDebounce->start(250);
 }
 
 void GameControlsPanel::onSchemeChanged(int index)
