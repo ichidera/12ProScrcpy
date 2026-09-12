@@ -5,6 +5,8 @@
 #include <QObject>
 #include <QPointer>
 #include <QSize>
+#include <QMap>
+#include <QTimer>
 
 #include "adbsendeventsession.h"
 #include "inputconvertbase.h"
@@ -111,6 +113,25 @@ private:
     void ensureRotationPolling();
     void pollDeviceRotation();
 
+    // MOVE-throttling for sendRealTouch(): each raw sendevent call spawns a
+    // new process on-device, and the persistent adb shell executes them
+    // strictly serially. A live drag generates far more mouse-move samples
+    // per second than the device can fork+exec+exit 3 processes per sample,
+    // so without throttling, a backlog piles up in the shell's input queue
+    // and keeps draining (visibly "sliding") well after the finger lifts.
+    // DOWN/UP are dispatched immediately as before - only MOVE is coalesced,
+    // always sending the latest known position per slot at each tick and
+    // silently dropping the stale intermediate ones rather than queuing all
+    // of them.
+    struct PendingTouchMove
+    {
+        bool valid = false;
+        int rawX = 0;
+        int rawY = 0;
+    };
+    void ensureTouchMoveThrottle();
+    void flushPendingTouchMoves();
+
 private:
     QPointer<Receiver> m_receiver;
     QPointer<InputConvertBase> m_inputConvert;
@@ -122,6 +143,8 @@ private:
     QPointer<AdbSendEventSession> m_realTouchSession;
     DeviceRotation m_deviceRotation = DeviceRotation::Unknown;
     QPointer<QTimer> m_rotationPollTimer;
+    QMap<int, PendingTouchMove> m_pendingTouchMoves;
+    QPointer<QTimer> m_touchMoveFlushTimer;
     // Guards against overlapping `dumpsys window` polls piling up if one
     // call happens to take longer than the poll interval (e.g. a slow/
     // wireless adb connection) - without this, a slow poll could still be

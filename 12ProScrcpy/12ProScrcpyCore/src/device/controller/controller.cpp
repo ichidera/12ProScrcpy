@@ -379,6 +379,36 @@ void Controller::pollDeviceRotation()
     proc->start(AdbProcessImpl::getAdbPath(), {"-s", m_serial, "shell", "dumpsys", "window"});
 }
 
+void Controller::ensureTouchMoveThrottle()
+{
+    if (m_touchMoveFlushTimer) {
+        return;
+    }
+    m_touchMoveFlushTimer = new QTimer(this);
+    // ~60Hz cap. Faster than this and the remote adb shell can't fork+exec
+    // `sendevent` processes as fast as Qt delivers mouse-move samples,
+    // building a backlog that keeps draining (visibly "sliding") after the
+    // finger has already lifted. At each tick, only the latest coalesced
+    // position per slot is sent - intermediate samples are dropped, not
+    // queued.
+    connect(m_touchMoveFlushTimer, &QTimer::timeout, this, &Controller::flushPendingTouchMoves);
+    m_touchMoveFlushTimer->start(16);
+}
+
+void Controller::flushPendingTouchMoves()
+{
+    if (!m_realTouchSession || !m_realTouchSession->isRunning()) {
+        return;
+    }
+    for (auto it = m_pendingTouchMoves.begin(); it != m_pendingTouchMoves.end(); ++it) {
+        if (!it.value().valid) {
+            continue;
+        }
+        m_realTouchSession->touchMove(it.key(), it.value().rawX, it.value().rawY);
+        it.value().valid = false; // consumed - don't resend the same position again next tick
+    }
+}
+
 void Controller::sendRealTouch(int slot, AndroidMotioneventAction action, QPoint framePos, const QSize &frameSize)
 {
     if (m_cameraMode) {
@@ -440,9 +470,11 @@ void Controller::sendRealTouch(int slot, AndroidMotioneventAction action, QPoint
         m_realTouchSession->touchDown(slot, slot + 1, rawX, rawY);
         break;
     case AMOTION_EVENT_ACTION_MOVE:
-        m_realTouchSession->touchMove(slot, rawX, rawY);
+        ensureTouchMoveThrottle();
+        m_pendingTouchMoves[slot] = { true, rawX, rawY };
         break;
     case AMOTION_EVENT_ACTION_UP:
+        m_pendingTouchMoves.remove(slot); // drop any move still queued for a slot that's now lifted
         m_realTouchSession->touchUp(slot);
         break;
     default:
