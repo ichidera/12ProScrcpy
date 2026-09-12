@@ -497,17 +497,15 @@ bool Controller::sendControl(const QByteArray &buffer)
 
 void Controller::postKeyCodeClick(AndroidKeycode keycode)
 {
-    ControlMsg *controlEventDown = new ControlMsg(ControlMsg::CMT_INJECT_KEYCODE);
-    if (!controlEventDown) {
-        return;
-    }
-    controlEventDown->setInjectKeycodeMsgData(AKEY_EVENT_ACTION_DOWN, keycode, 0, AMETA_NONE);
-    postControlMsg(controlEventDown);
+    sendRealKeyEvent(static_cast<int>(keycode));
+}
 
-    ControlMsg *controlEventUp = new ControlMsg(ControlMsg::CMT_INJECT_KEYCODE);
-    if (!controlEventUp) {
+void Controller::sendRealKeyEvent(int androidKeycode)
+{
+    ensureRealTouchSession();
+    if (!m_realTouchSession || !m_realTouchSession->isRunning()) {
+        qWarning() << "Controller::sendRealKeyEvent: sendevent session not running, dropping key event";
         return;
     }
-    controlEventUp->setInjectKeycodeMsgData(AKEY_EVENT_ACTION_UP, keycode, 0, AMETA_NONE);
-    postControlMsg(controlEventUp);
+    m_realTouchSession->pressKeyEvent(androidKeycode);
 }

@@ -236,13 +236,22 @@ void InputConvertGame::sendTouchEvent(int id, QPointF pos, AndroidMotioneventAct
 }
 
 void InputConvertGame::sendKeyEvent(AndroidKeyeventAction action, AndroidKeycode keyCode) {
-    ControlMsg *controlMsg = new ControlMsg(ControlMsg::CMT_INJECT_KEYCODE);
-    if (!controlMsg) {
+    // `input keyevent` (root-elevated, same su session as touch) fires an
+    // atomic press+release - there's no way to inject a true separate
+    // down/up through it the way the old ControlMsg socket path could.
+    // Fire once on DOWN and no-op on UP so a mapped keymap key still
+    // triggers its bound Android key exactly once per physical press,
+    // rather than firing twice (which double-triggers most bindings).
+    // Tradeoff: keymap bindings that specifically rely on a sustained
+    // hold translating into a held Android key (rather than a discrete
+    // trigger) won't get that hold behavior here.
+    if (action != AKEY_EVENT_ACTION_DOWN) {
         return;
     }
-
-    controlMsg->setInjectKeycodeMsgData(action, keyCode, 0, AMETA_NONE);
-    sendControlMsg(controlMsg);
+    if (!m_controller) {
+        return;
+    }
+    m_controller->sendRealKeyEvent(static_cast<int>(keyCode));
 }
 
 QPointF InputConvertGame::calcFrameAbsolutePos(QPointF relativePos)

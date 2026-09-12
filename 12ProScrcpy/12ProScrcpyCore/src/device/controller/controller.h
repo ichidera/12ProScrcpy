@@ -84,6 +84,7 @@ protected:
 private:
     bool sendControl(const QByteArray &buffer);
     void postKeyCodeClick(AndroidKeycode keycode);
+    void sendRealKeyEvent(int androidKeycode);
     void sendPendingResize();
     void ensureRealTouchSession();
 
