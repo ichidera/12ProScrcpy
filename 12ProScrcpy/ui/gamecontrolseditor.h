@@ -15,6 +15,8 @@ class VideoForm;
 class GameControlMarker;
 class EditModeOverlay;
 class QComboBox;
+class QToolButton;
+class QLabel;
 class KeyCaptureButton;
 
 // The "App Control" panel: replaces hand-writing a keymap .json - profiles
@@ -60,12 +62,17 @@ protected:
 private slots:
     void onProfileChanged(int index);
     void onNewProfile();
+    void onRenameProfile();
+    void onDuplicateProfile();
     void onSaveProfile();
     void onDeleteProfile();
     void onCancelEdits();
 
 private:
     void buildUi();
+    QWidget *buildControlSchemeSection();
+    QWidget *buildPaletteSection();
+    QToolButton *makeGlyphButton(QChar glyph, const QString &tooltip, bool enabled, QWidget *parent);
     void reloadProfileList(const QString &selectName = QString());
     void clearMarkers();
     void addMarkerForNode(const ControlNode &node);
@@ -85,6 +92,7 @@ private:
     QPointer<EditModeOverlay> m_overlay;
 
     QComboBox *m_profileCombo = nullptr;
+    QLabel *m_titleLabel = nullptr;
     KeyCaptureButton *m_switchKeyCapture = nullptr;     // activates the scheme (default `)
     KeyCaptureButton *m_cursorLockKeyCapture = nullptr; // locks+hides the cursor (default F1)
 

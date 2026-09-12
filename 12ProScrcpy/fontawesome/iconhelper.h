@@ -34,6 +34,16 @@ public:
     // Covers QToolButton (and anything else QAbstractButton-derived) without
     // needing a dedicated overload per button class.
     void SetIcon(QAbstractButton *btn, QChar c, int size = 10);
+
+    // For cases that need the glyph as an actual QIcon/QPixmap (e.g. a
+    // button that mixes an icon-font glyph with normal-font text, which
+    // can't share a single QAbstractButton::setText()/setFont() pair).
+    QFont font(int pointSize) const
+    {
+        QFont f = iconFont;
+        f.setPointSize(pointSize);
+        return f;
+    }
 };
 
 #endif // ICONHELPER_H
