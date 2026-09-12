@@ -78,6 +78,18 @@ def parse_gitignore(repo_root: Path) -> List[str]:
     return patterns
 
 
+def is_hardcoded_excluded(rel: Path) -> bool:
+    excluded_roots = (
+        '12ProScrcpy/12ProScrcpyCore/src/third_party',
+        '12ProScrcpyCore/src/third_party',
+    )
+    s = rel.as_posix()
+    for root in excluded_roots:
+        if s == root or s.startswith(root + '/'):
+            return True
+    return False
+
+
 def matches_simple(patterns: List[str], rel: Path) -> bool:
     # Best-effort simple matching for common patterns. Not a full pathspec impl.
     from fnmatch import fnmatch
@@ -133,6 +145,8 @@ def walk_and_filter(repo_root: Path, patterns: List[str]) -> Iterable[Path]:
         if p.is_dir():
             continue
         rel = p.relative_to(repo_root)
+        if is_hardcoded_excluded(rel):
+            continue
         if matches_simple(patterns, rel):
             continue
         yield p
@@ -170,6 +184,8 @@ def main() -> int:
         filtered_files = []
         for f in files:
             rel = f.relative_to(repo_root)
+            if is_hardcoded_excluded(rel):
+                continue
             if not matches_simple(patterns, rel):
                 filtered_files.append(f)
         files = filtered_files
