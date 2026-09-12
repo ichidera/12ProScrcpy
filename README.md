@@ -58,8 +58,12 @@ This project's goal is to smooth over those issues so mirroring "just works" on 
 ## Getting started
 
 ```powershell
-git clone <this-repo-url>
+git clone https://github.com/ichidera/12ProScrcpy
 cd 12ProScrcpy
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+cmake --build . --config Release
+``` 
 # build instructions TBD — see QtScrcpy/ for upstream build docs in the meantime
 ```
 
