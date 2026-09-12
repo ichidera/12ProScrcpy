@@ -398,26 +398,35 @@ void Controller::sendRealTouch(int slot, AndroidMotioneventAction action, QPoint
     if (frameSize.width() > 0 && frameSize.height() > 0) {
         const bool frameIsLandscape = frameSize.width() > frameSize.height();
         // Touch panel's native coordinate space is portrait. A landscape
-        // mirrored frame (width() > height()) always needs the same
-        // pre-rotation before scaling to native panel coords - axes
-        // swapped, one flipped - regardless of whether the device is
-        // currently at ROTATION_90 or ROTATION_270.
+        // mirrored frame (width() > height()) needs pre-rotation before
+        // scaling to native panel coords.
         //
-        // We originally assumed ROTATION_90 and ROTATION_270, being
-        // mirror-image chiralities, would need opposite/mirrored formulas,
-        // and added m_deviceRotation (polled from `dumpsys window`'s
-        // mCurrentRotation) specifically to disambiguate which to apply.
-        // On-device calibration at both rotations disproved that: the same
-        // swap formula matches real tap results (within calibration noise)
-        // at both ROTATION_90 and ROTATION_270, so no disambiguation is
-        // actually needed here. m_deviceRotation / the rotation poll is
-        // kept in place (harmless, and cheap now at 200ms) in case a real
-        // divergence shows up in further testing - see CHANGELOG.
+        // ROTATION_270 was verified against on-device tap tests and uses
+        // the swap formula below. ROTATION_90 is the mirror-image
+        // chirality of ROTATION_270 (180 degrees apart from it, not from
+        // portrait) - rather than an independently-derived formula, it's
+        // computed as the point-reflection of the 270 formula through the
+        // panel's center (xMax - rx270, yMax - ry270). This is a
+        // reasonable hypothesis given the relationship between the two
+        // rotations, but has NOT yet been independently confirmed against
+        // real tap data the way 270 was - recalibrate from fresh tap
+        // samples if this doesn't line up on-device.
         if (frameIsLandscape) {
-            // Empirically derived and verified against on-device tap tests
-            // at both ROTATION_90 and ROTATION_270.
-            double rx = framePos.y() * static_cast<double>(profile.xMax) / frameSize.height();
-            double ry = profile.yMax - (framePos.x() * static_cast<double>(profile.yMax) / frameSize.width());
+            double rx = 0.0;
+            double ry = 0.0;
+            const double rx270 = framePos.y() * static_cast<double>(profile.xMax) / frameSize.height();
+            const double ry270 = profile.yMax - (framePos.x() * static_cast<double>(profile.yMax) / frameSize.width());
+
+            if (m_deviceRotation == DeviceRotation::Rotation90) {
+                rx = profile.xMax - rx270;
+                ry = profile.yMax - ry270;
+            } else {
+                // ROTATION_270, and the fallback for Rotation0/180/Unknown
+                // reported while the frame is still landscape (e.g. before
+                // the first poll completes) - matches the verified formula.
+                rx = rx270;
+                ry = ry270;
+            }
             rawX = qBound(0, static_cast<int>(qRound(rx)), profile.xMax);
             rawY = qBound(0, static_cast<int>(qRound(ry)), profile.yMax);
         } else {
