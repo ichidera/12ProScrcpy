@@ -37,6 +37,13 @@ public:
     // touch/click path now - see docs/real-device-adb-sendevent.md.
     void sendRealTouch(int slot, AndroidMotioneventAction action, QPoint framePos, const QSize &frameSize);
 
+    // Root-elevated `input keyevent` fallback (same su session as touch),
+    // used for keys with no confirmed raw-sendevent hardware node on this
+    // device. postKeyCodeClick() routes through this internally; exposed
+    // publicly so InputConvertGame's keymap "android key" bindings can call
+    // it directly too, instead of going through the old control-socket path.
+    void sendRealKeyEvent(int androidKeycode);
+
     void updateScript(QString gameScript = "");
     bool isCurrentCustomKeymap();
 
@@ -84,7 +91,6 @@ protected:
 private:
     bool sendControl(const QByteArray &buffer);
     void postKeyCodeClick(AndroidKeycode keycode);
-    void sendRealKeyEvent(int androidKeycode);
     void sendPendingResize();
     void ensureRealTouchSession();
 
