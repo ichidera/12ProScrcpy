@@ -28,6 +28,22 @@ void GameControlMarker::setNode(const ControlNode &node)
     update();
 }
 
+void GameControlMarker::setInteractive(bool interactive)
+{
+    m_interactive = interactive;
+    // Non-interactive markers (the persistent "on-screen controls" display)
+    // must never eat clicks meant for the game underneath them, nor look
+    // clickable.
+    setAttribute(Qt::WA_TransparentForMouseEvents, !interactive);
+    setCursor(interactive ? Qt::PointingHandCursor : Qt::ArrowCursor);
+}
+
+void GameControlMarker::setDisplayOpacityPercent(int percent)
+{
+    m_displayOpacityPercent = qBound(0, percent, 100);
+    update();
+}
+
 void GameControlMarker::relayout(const QSize &surfaceSize)
 {
     if (surfaceSize.isEmpty()) {
@@ -106,6 +122,9 @@ void GameControlMarker::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, true);
+    if (m_displayOpacityPercent < 100) {
+        p.setOpacity(m_displayOpacityPercent / 100.0);
+    }
 
     // Outer badge: color still keys the action category (kept from before),
     // but the interior is now a real glyph instead of a text abbreviation -
@@ -198,6 +217,9 @@ void GameControlMarker::paintEvent(QPaintEvent *)
 
 void GameControlMarker::mousePressEvent(QMouseEvent *event)
 {
+    if (!m_interactive) {
+        return;
+    }
     if (event->button() == Qt::LeftButton) {
         m_dragging = true;
         m_dragStartMouse = event->globalPosition().toPoint();
@@ -207,7 +229,7 @@ void GameControlMarker::mousePressEvent(QMouseEvent *event)
 
 void GameControlMarker::mouseMoveEvent(QMouseEvent *event)
 {
-    if (!m_dragging || !parentWidget()) {
+    if (!m_interactive || !m_dragging || !parentWidget()) {
         return;
     }
     const QPoint delta = event->globalPosition().toPoint() - m_dragStartMouse;
@@ -236,11 +258,16 @@ void GameControlMarker::mouseReleaseEvent(QMouseEvent *event)
 void GameControlMarker::mouseDoubleClickEvent(QMouseEvent *event)
 {
     Q_UNUSED(event)
-    emit editRequested(this);
+    if (m_interactive) {
+        emit editRequested(this);
+    }
 }
 
 void GameControlMarker::contextMenuEvent(QContextMenuEvent *event)
 {
+    if (!m_interactive) {
+        return;
+    }
     QMenu menu(this);
     QAction *editAction = menu.addAction(tr("Edit..."));
     QAction *removeAction = menu.addAction(tr("Remove"));

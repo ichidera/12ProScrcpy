@@ -31,14 +31,12 @@ int main(int argc, char *argv[])
 #ifdef Q_OS_WIN32
     qputenv("12PROSCRCPY_ADB_PATH", "../../../12ProScrcpy/12ProScrcpyCore/src/third_party/adb/win/adb.exe");
     qputenv("12PROSCRCPY_SERVER_PATH", "../../../12ProScrcpy/12ProScrcpyCore/src/third_party/scrcpy-server");
-    qputenv("12PROSCRCPY_KEYMAP_PATH", "../../../keymap");
     qputenv("12PROSCRCPY_CONFIG_PATH", "../../../config");
 #endif
 
 #ifdef Q_OS_MACOS
     qputenv("12PROSCRCPY_ADB_PATH", "../../../../../../12ProScrcpy/12ProScrcpyCore/src/third_party/adb/mac/adb");
     qputenv("12PROSCRCPY_SERVER_PATH", "../../../../../../12ProScrcpy/12ProScrcpyCore/src/third_party/scrcpy-server");
-    qputenv("12PROSCRCPY_KEYMAP_PATH", "../../../../../../keymap");
     qputenv("12PROSCRCPY_CONFIG_PATH", "../../../../../../config");
 #endif
 
@@ -49,9 +47,6 @@ int main(int argc, char *argv[])
     }
     if (qgetenv("12PROSCRCPY_SERVER_PATH").isEmpty()) {
         qputenv("12PROSCRCPY_SERVER_PATH", "../../../12ProScrcpy/12ProScrcpyCore/src/third_party/scrcpy-server");
-    }
-    if (qgetenv("12PROSCRCPY_KEYMAP_PATH").isEmpty()) {
-        qputenv("12PROSCRCPY_KEYMAP_PATH", "../../../keymap");
     }
     if (qgetenv("12PROSCRCPY_CONFIG_PATH").isEmpty()) {
         qputenv("12PROSCRCPY_CONFIG_PATH", "../../../config");

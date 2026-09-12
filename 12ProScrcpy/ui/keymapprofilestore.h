@@ -56,26 +56,44 @@ struct ControlNode
     QString label; // shown on the marker/list; auto-filled if left empty
 };
 
-// Reads/writes profiles as .json files in the same keymap directory the
-// engine (KeyMap::loadKeyMap) already reads from, and converts between that
-// JSON and the ControlNode list above. This is the only place besides
+// Reads/writes profiles as .json files under this app's own internal
+// storage, scoped per "interface" (the Android package id of whatever game
+// the scheme belongs to - see GameInterfaceMonitor), and converts between
+// that JSON and the ControlNode list above. This is the only place besides
 // KeyMap itself that needs to know the on-disk schema.
+//
+// There is deliberately no single flat "keymap" folder a person is expected
+// to browse or hand-edit any more: every scheme lives under its owning
+// interface, several schemes can exist per interface, and the app picks
+// which one is active by asking what's currently in the foreground.
 class KeyMapProfileStore
 {
 public:
-    static QString profileDirPath();
-    static QStringList listProfiles(); // display names, no ".json" suffix
+    // Root of this app's internal control-scheme storage (one subfolder per
+    // interface underneath it). Not meant to be user-facing; exposed mainly
+    // for diagnostics/support.
+    static QString storageRoot();
+
+    // Used to file profiles under when the foreground app can't be
+    // identified yet (adb unavailable, no device, monitor not started).
+    static QString unknownInterfaceId();
+
+    // Shown for an interface that has no saved scheme yet, and used as the
+    // default name for the first scheme created under an interface.
+    static QString defaultProfileDisplayName();
+
+    static QStringList listProfiles(const QString &interfaceId); // display names, no ".json" suffix
 
     // cursorLockKey: the key that grabs+hides the OS cursor (BlueStacks-style
     // "enter/exit shooting mode"), independent of switchKey which only
     // activates the scheme. Defaults to F1 when a profile predates this
     // field or leaves it blank.
-    static bool loadProfile(const QString &name, QString &switchKey, QString &cursorLockKey, QVector<ControlNode> &nodes,
-                             QString *error = nullptr);
-    static bool saveProfile(const QString &name, const QString &switchKey, const QString &cursorLockKey,
+    static bool loadProfile(const QString &interfaceId, const QString &name, QString &switchKey, QString &cursorLockKey,
+                             QVector<ControlNode> &nodes, QString *error = nullptr);
+    static bool saveProfile(const QString &interfaceId, const QString &name, const QString &switchKey, const QString &cursorLockKey,
                              const QVector<ControlNode> &nodes, QString *error = nullptr);
-    static bool deleteProfile(const QString &name);
-    static bool profileExists(const QString &name);
+    static bool deleteProfile(const QString &interfaceId, const QString &name);
+    static bool profileExists(const QString &interfaceId, const QString &name);
 
     static QString toJson(const QString &switchKey, const QString &cursorLockKey, const QVector<ControlNode> &nodes);
     static bool fromJson(const QString &json, QString &switchKey, QString &cursorLockKey, QVector<ControlNode> &nodes,

@@ -26,6 +26,14 @@ public:
         return false;
     }
 
+    // Forces the custom keymap engaged/disengaged directly, bypassing the
+    // switch key. Used by the "Game control" toggle in the UI so a scheme
+    // can be active for as long as the mirrored window has focus, without
+    // requiring the switch key (` by default) to be pressed first - that
+    // key keeps working as a manual override either way. No-op unless a
+    // keymap-capable InputConvert (InputConvertGame) is in use.
+    virtual void setForceCustomKeymap(bool /*enabled*/) {}
+
 signals:
     void grabCursor(bool grab);
 

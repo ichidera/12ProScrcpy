@@ -962,6 +962,14 @@ void VideoForm::closeEvent(QCloseEvent *event)
     device->disconnectDevice();
 }
 
+void VideoForm::changeEvent(QEvent *event)
+{
+    QWidget::changeEvent(event);
+    if (event->type() == QEvent::ActivationChange) {
+        emit windowActiveChanged(isActiveWindow());
+    }
+}
+
 void VideoForm::dragEnterEvent(QDragEnterEvent *event)
 {
     event->acceptProposedAction();

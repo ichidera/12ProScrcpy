@@ -81,6 +81,7 @@ public:
 
     void updateScript(QString script) override;
     bool isCurrentCustomKeymap() override;
+    void setCustomKeymapForced(bool enabled) override;
 
 private:
     void initSignals();

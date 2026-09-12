@@ -111,7 +111,7 @@ set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-set(qt_required_components Widgets Network Multimedia)
+set(qt_required_components Widgets Network Multimedia Sql)
 
 if (QT_DESIRED_VERSION MATCHES 6)
     # list(APPEND qt_required_components Core5Compat)
@@ -129,6 +129,7 @@ set(LINK_LIBS
     Qt${QT_DESIRED_VERSION}::Widgets
     Qt${QT_DESIRED_VERSION}::Network
     Qt${QT_DESIRED_VERSION}::Multimedia
+    Qt${QT_DESIRED_VERSION}::Sql
 )
 
 if (QT_DESIRED_VERSION MATCHES 6)
@@ -196,6 +197,12 @@ set(QC_UI_SOURCES
     ui/gamecontrolseditor.cpp
     ui/editmodeoverlay.h
     ui/editmodeoverlay.cpp
+    ui/gameinterfacemonitor.h
+    ui/gameinterfacemonitor.cpp
+    ui/gamecontrolspanel.h
+    ui/gamecontrolspanel.cpp
+    ui/toggleswitch.h
+    ui/toggleswitch.cpp
     render/qyuvopenglwidget.h
     render/qyuvopenglwidget.cpp
 )

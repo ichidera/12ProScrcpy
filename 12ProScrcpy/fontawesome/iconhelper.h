@@ -31,6 +31,9 @@ public:
 
     void SetIcon(QLabel *lab, QChar c, int size = 10);
     void SetIcon(QPushButton *btn, QChar c, int size = 10);
+    // Covers QToolButton (and anything else QAbstractButton-derived) without
+    // needing a dedicated overload per button class.
+    void SetIcon(QAbstractButton *btn, QChar c, int size = 10);
 };
 
 #endif // ICONHELPER_H

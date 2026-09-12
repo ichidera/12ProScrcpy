@@ -850,6 +850,14 @@ bool Device::isCurrentCustomKeymap()
     return m_controller->isCurrentCustomKeymap();
 }
 
+void Device::setCustomKeymapForced(bool enabled)
+{
+    if (isCameraMode() || !m_controller) {
+        return;
+    }
+    m_controller->setForceCustomKeymap(enabled);
+}
+
 bool Device::saveFrame(int width, int height, uint8_t* dataRGB32)
 {
     if (!dataRGB32) {

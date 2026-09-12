@@ -40,6 +40,13 @@ public:
     void setGameControlsEditor(class GameControlsEditor *editor);
     QWidget *gameControlsSurface();
 
+signals:
+    // Emitted when this window gains/loses OS focus - used by
+    // GameControlsPanel's "Game control" toggle to auto-engage the custom
+    // keymap only while the mirrored window is actually focused, instead of
+    // requiring the switch key to be pressed every time.
+    void windowActiveChanged(bool active);
+
 private:
     void onFrame(int width, int height, uint8_t* dataY, uint8_t* dataU, uint8_t* dataV,
                  int linesizeY, int linesizeU, int linesizeV) override;
@@ -71,6 +78,7 @@ protected:
     void showEvent(QShowEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void closeEvent(QCloseEvent *event) override;
+    void changeEvent(QEvent *event) override;
 
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dragMoveEvent(QDragMoveEvent *event) override;

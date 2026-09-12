@@ -87,6 +87,14 @@ bool Controller::isCurrentCustomKeymap()
     return m_inputConvert->isCurrentCustomKeymap();
 }
 
+void Controller::setForceCustomKeymap(bool enabled)
+{
+    if (!m_inputConvert) {
+        return;
+    }
+    m_inputConvert->setForceCustomKeymap(enabled);
+}
+
 void Controller::postBackOrScreenOn(bool down)
 {
     ControlMsg *controlMsg = new ControlMsg(ControlMsg::CMT_BACK_OR_SCREEN_ON);

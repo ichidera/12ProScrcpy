@@ -3,7 +3,7 @@
 #include <QMouseEvent>
 #include <QShowEvent>
 
-#include "gamecontrolseditor.h"
+#include "gamecontrolspanel.h"
 #include "iconhelper.h"
 #include "toolform.h"
 #include "ui_toolform.h"
@@ -35,6 +35,21 @@ void ToolForm::setSerial(const QString &serial)
 void ToolForm::setVideoForm(VideoForm *videoForm)
 {
     m_videoForm = videoForm;
+
+    // Created eagerly (not lazily on first button click) so the interface
+    // monitor is already tracking the foreground app - and any saved scheme
+    // for it already applied - by the time someone opens the panel.
+    if (!m_gameControlsPanel && !m_serial.isEmpty()) {
+        m_gameControlsPanel = new GameControlsPanel(m_serial, nullptr);
+        m_gameControlsPanel->setVideoForm(m_videoForm);
+        QPoint pos(this->x() - m_gameControlsPanel->sizeHint().width() - 8, this->y());
+        if (pos.x() < 0) {
+            pos.setX(0);
+        }
+        m_gameControlsPanel->move(pos);
+    } else if (m_gameControlsPanel) {
+        m_gameControlsPanel->setVideoForm(m_videoForm);
+    }
 }
 
 bool ToolForm::isHost()
@@ -262,31 +277,21 @@ void ToolForm::on_rotateBtn_clicked()
 
 void ToolForm::on_appControlBtn_clicked()
 {
-    if (!m_videoForm) {
+    if (!m_gameControlsPanel) {
         return;
     }
 
-    if (!m_gameControlsEditor) {
-        m_gameControlsEditor = new GameControlsEditor(m_serial, nullptr);
-        m_gameControlsEditor->setAttribute(Qt::WA_DeleteOnClose);
-        m_gameControlsEditor->setWindowFlags(Qt::Tool | Qt::WindowStaysOnTopHint);
-        m_gameControlsEditor->setVideoForm(m_videoForm);
-
-        // Sit the panel just to the left of this toolbar, matching the
-        // reference "Controls editor" placement next to the mirrored screen.
-        QPoint pos(this->x() - m_gameControlsEditor->sizeHint().width() - 8, this->y());
+    if (m_gameControlsPanel->isVisible()) {
+        m_gameControlsPanel->hide();
+    } else {
+        QPoint pos(this->x() - m_gameControlsPanel->sizeHint().width() - 8, this->y());
         if (pos.x() < 0) {
             pos.setX(0);
         }
-        m_gameControlsEditor->move(pos);
-    }
-
-    if (m_gameControlsEditor->isVisible()) {
-        m_gameControlsEditor->hide();
-    } else {
-        m_gameControlsEditor->show();
-        m_gameControlsEditor->raise();
-        m_gameControlsEditor->activateWindow();
+        m_gameControlsPanel->move(pos);
+        m_gameControlsPanel->show();
+        m_gameControlsPanel->raise();
+        m_gameControlsPanel->activateWindow();
     }
 }
 

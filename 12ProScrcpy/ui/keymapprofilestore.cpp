@@ -8,11 +8,32 @@
 #include <QJsonObject>
 #include <QMetaEnum>
 #include <QObject>
+#include <QStandardPaths>
 
 #include "keymapprofilestore.h"
 
 namespace
 {
+// Sanitizes a package id (or whatever else is passed) into something safe
+// to use as a single directory name - package ids are already just dotted
+// alphanumerics, so this only matters for the unknown-interface fallback
+// and any oddball input.
+QString sanitizedInterfaceDir(const QString &interfaceId)
+{
+    QString id = interfaceId.isEmpty() ? KeyMapProfileStore::unknownInterfaceId() : interfaceId;
+    for (QChar &c : id) {
+        if (!(c.isLetterOrNumber() || c == QLatin1Char('.') || c == QLatin1Char('_') || c == QLatin1Char('-'))) {
+            c = QLatin1Char('_');
+        }
+    }
+    return id;
+}
+
+QString interfaceDirPath(const QString &interfaceId)
+{
+    return KeyMapProfileStore::storageRoot() + "/" + sanitizedInterfaceDir(interfaceId);
+}
+
 QPointF jsonPos(const QJsonObject &node, const QString &name)
 {
     QJsonObject pos = node.value(name).toObject();
@@ -39,23 +60,32 @@ QJsonObject clickJson(const QString &key, QPointF pos, bool switchMap = false)
 }
 } // namespace
 
-QString KeyMapProfileStore::profileDirPath()
+QString KeyMapProfileStore::storageRoot()
 {
-    static QString s_path;
-    if (s_path.isEmpty()) {
-        s_path = QString::fromLocal8Bit(qgetenv("QTSCRCPY_KEYMAP_PATH"));
-        QFileInfo fileInfo(s_path);
-        if (s_path.isEmpty() || !fileInfo.isDir()) {
-            s_path = QCoreApplication::applicationDirPath() + "/keymap";
-        }
+    static QString s_root;
+    if (s_root.isEmpty()) {
+        // Internal app storage, not a folder anyone is meant to browse by
+        // hand - QTSCRCPY_KEYMAP_PATH / the old "<app dir>/keymap" folder
+        // are both gone. Schemes are filed per-interface underneath this.
+        s_root = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/gamecontrols";
     }
-    return s_path;
+    return s_root;
 }
 
-QStringList KeyMapProfileStore::listProfiles()
+QString KeyMapProfileStore::unknownInterfaceId()
+{
+    return QStringLiteral("_unknown");
+}
+
+QString KeyMapProfileStore::defaultProfileDisplayName()
+{
+    return QObject::tr("Game controls");
+}
+
+QStringList KeyMapProfileStore::listProfiles(const QString &interfaceId)
 {
     QStringList names;
-    QDir dir(profileDirPath());
+    QDir dir(interfaceDirPath(interfaceId));
     if (!dir.exists()) {
         return names;
     }
@@ -68,20 +98,20 @@ QStringList KeyMapProfileStore::listProfiles()
     return names;
 }
 
-bool KeyMapProfileStore::profileExists(const QString &name)
+bool KeyMapProfileStore::profileExists(const QString &interfaceId, const QString &name)
 {
-    return QFile::exists(profileDirPath() + "/" + name + ".json");
+    return QFile::exists(interfaceDirPath(interfaceId) + "/" + name + ".json");
 }
 
-bool KeyMapProfileStore::deleteProfile(const QString &name)
+bool KeyMapProfileStore::deleteProfile(const QString &interfaceId, const QString &name)
 {
-    return QFile::remove(profileDirPath() + "/" + name + ".json");
+    return QFile::remove(interfaceDirPath(interfaceId) + "/" + name + ".json");
 }
 
-bool KeyMapProfileStore::loadProfile(const QString &name, QString &switchKey, QString &cursorLockKey, QVector<ControlNode> &nodes,
-                                      QString *error)
+bool KeyMapProfileStore::loadProfile(const QString &interfaceId, const QString &name, QString &switchKey, QString &cursorLockKey,
+                                      QVector<ControlNode> &nodes, QString *error)
 {
-    QDir dir(profileDirPath());
+    QDir dir(interfaceDirPath(interfaceId));
     QFile file(dir.filePath(name + ".json"));
     if (!file.open(QIODevice::ReadOnly)) {
         if (error) {
@@ -94,14 +124,14 @@ bool KeyMapProfileStore::loadProfile(const QString &name, QString &switchKey, QS
     return fromJson(json, switchKey, cursorLockKey, nodes, error);
 }
 
-bool KeyMapProfileStore::saveProfile(const QString &name, const QString &switchKey, const QString &cursorLockKey,
-                                      const QVector<ControlNode> &nodes, QString *error)
+bool KeyMapProfileStore::saveProfile(const QString &interfaceId, const QString &name, const QString &switchKey,
+                                      const QString &cursorLockKey, const QVector<ControlNode> &nodes, QString *error)
 {
-    QDir dir(profileDirPath());
+    QDir dir(interfaceDirPath(interfaceId));
     if (!dir.exists()) {
         if (!dir.mkpath(".")) {
             if (error) {
-                *error = QObject::tr("could not create keymap directory");
+                *error = QObject::tr("could not create control scheme storage for this app");
             }
             return false;
         }

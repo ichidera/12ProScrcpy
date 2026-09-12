@@ -67,7 +67,7 @@ private:
     QPoint m_dragPosition;
     QString m_serial;
     QPointer<class VideoForm> m_videoForm;
-    QPointer<class GameControlsEditor> m_gameControlsEditor;
+    QPointer<class GameControlsPanel> m_gameControlsPanel;
     bool m_cameraTorch = false;
     bool m_isHost = false;
 };

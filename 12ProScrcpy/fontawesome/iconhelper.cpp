@@ -21,3 +21,10 @@ void IconHelper::SetIcon(QPushButton *btn, QChar c, int size)
     btn->setFont(iconFont);
     btn->setText(c);
 }
+
+void IconHelper::SetIcon(QAbstractButton *btn, QChar c, int size)
+{
+    iconFont.setPointSize(size);
+    btn->setFont(iconFont);
+    btn->setText(c);
+}

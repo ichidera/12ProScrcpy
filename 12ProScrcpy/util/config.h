@@ -73,6 +73,11 @@ public:
     // user data:device
     void setNickName(const QString &serial, const QString &name);
     QString getNickName(const QString &serial);
+
+    // Persists the "Game controls" quick-settings panel's toggles per
+    // device, so they survive reconnecting to the same phone.
+    void setGameControlsPanelSettings(const QString &serial, bool masterEnabled, bool onScreenVisible, int opacityPercent);
+    void getGameControlsPanelSettings(const QString &serial, bool &masterEnabled, bool &onScreenVisible, int &opacityPercent);
     void setRect(const QString &serial, const QRect &rc);
     QRect getRect(const QString &serial);
 

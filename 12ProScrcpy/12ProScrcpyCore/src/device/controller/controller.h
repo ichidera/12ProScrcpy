@@ -55,6 +55,9 @@ public:
 
     void updateScript(QString gameScript = "");
     bool isCurrentCustomKeymap();
+    // See InputConvertBase::setForceCustomKeymap() - no-op when the current
+    // InputConvert isn't keymap-capable (i.e. no script was ever loaded).
+    void setForceCustomKeymap(bool enabled);
 
     void postGoBack();
     void postGoHome();

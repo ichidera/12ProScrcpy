@@ -31,9 +31,26 @@ public:
     // palette drops back here.
     void setVideoForm(VideoForm *videoForm);
 
+    // Scopes every profile operation below to one "interface" (Android
+    // package id) - see GameInterfaceMonitor. Switching interfaces reloads
+    // the profile list and clears any markers on screen. displayName is
+    // used only for the window title (e.g. "Controls editor — Genshin Impact").
+    void setInterface(const QString &interfaceId, const QString &displayName);
+
+    // Selects an existing profile by name (e.g. the one currently active in
+    // GameControlsPanel) so opening the full editor lands on the same
+    // scheme instead of always starting from "(unsaved scheme)".
+    void selectProfile(const QString &name);
+
     // Called by VideoForm::dropEvent() when a palette drag lands on the
     // mirrored screen. normPos is in [0,1] video-relative coordinates.
     void handleControlDropped(ControlActionKind kind, QPointF normPos);
+
+signals:
+    // Fired after a save/new/delete actually changes what's on disk for
+    // this interface, so GameControlsPanel can refresh its Scheme picker
+    // (and reload live data if the affected profile is the active one).
+    void profilesChanged(const QString &interfaceId);
 
 protected:
     void showEvent(QShowEvent *event) override;
@@ -62,6 +79,8 @@ private:
 
 private:
     QString m_serial;
+    QString m_interfaceId;   // Android package id this editor's profiles belong to
+    QString m_interfaceLabel; // friendly name, title bar only
     QPointer<VideoForm> m_videoForm;
     QPointer<EditModeOverlay> m_overlay;
 

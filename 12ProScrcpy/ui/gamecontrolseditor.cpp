@@ -62,7 +62,8 @@ private:
 };
 } // namespace
 
-GameControlsEditor::GameControlsEditor(const QString &serial, QWidget *parent) : QWidget(parent), m_serial(serial)
+GameControlsEditor::GameControlsEditor(const QString &serial, QWidget *parent)
+    : QWidget(parent), m_serial(serial), m_interfaceId(KeyMapProfileStore::unknownInterfaceId())
 {
     buildUi();
     reloadProfileList();
@@ -153,6 +154,33 @@ void GameControlsEditor::setVideoForm(VideoForm *videoForm)
     }
 }
 
+void GameControlsEditor::setInterface(const QString &interfaceId, const QString &displayName)
+{
+    const QString normalizedId = interfaceId.isEmpty() ? KeyMapProfileStore::unknownInterfaceId() : interfaceId;
+    if (m_interfaceId == normalizedId) {
+        m_interfaceLabel = displayName;
+        setWindowTitle(m_interfaceLabel.isEmpty() ? tr("Controls editor") : tr("Controls editor — %1").arg(m_interfaceLabel));
+        return;
+    }
+    m_interfaceId = normalizedId;
+    m_interfaceLabel = displayName;
+    setWindowTitle(m_interfaceLabel.isEmpty() ? tr("Controls editor") : tr("Controls editor — %1").arg(m_interfaceLabel));
+    clearMarkers();
+    m_currentProfileName.clear();
+    reloadProfileList();
+}
+
+void GameControlsEditor::selectProfile(const QString &name)
+{
+    if (name.isEmpty()) {
+        return;
+    }
+    const int idx = m_profileCombo->findText(name);
+    if (idx >= 0) {
+        m_profileCombo->setCurrentIndex(idx);
+    }
+}
+
 void GameControlsEditor::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
@@ -210,10 +238,13 @@ bool GameControlsEditor::eventFilter(QObject *watched, QEvent *event)
 
 void GameControlsEditor::reloadProfileList(const QString &selectName)
 {
-    const QStringList profiles = KeyMapProfileStore::listProfiles();
+    const QStringList profiles = KeyMapProfileStore::listProfiles(m_interfaceId);
     m_profileCombo->blockSignals(true);
     m_profileCombo->clear();
-    m_profileCombo->addItem(tr("(unsaved scheme)"));
+    // Default entry shown for an interface with no saved scheme yet -
+    // matches the generic "Game controls" label the compact panel shows in
+    // that same situation, instead of a raw "(unsaved scheme)" placeholder.
+    m_profileCombo->addItem(KeyMapProfileStore::defaultProfileDisplayName());
     m_profileCombo->addItems(profiles);
     m_profileCombo->blockSignals(false);
 
@@ -243,7 +274,7 @@ void GameControlsEditor::onProfileChanged(int index)
     QString cursorLockKey;
     QVector<ControlNode> nodes;
     QString error;
-    if (!KeyMapProfileStore::loadProfile(name, switchKey, cursorLockKey, nodes, &error)) {
+    if (!KeyMapProfileStore::loadProfile(m_interfaceId, name, switchKey, cursorLockKey, nodes, &error)) {
         QMessageBox::warning(this, tr("Controls editor"), tr("Could not load profile: %1").arg(error));
         return;
     }
@@ -265,7 +296,7 @@ void GameControlsEditor::onNewProfile()
     if (!ok || name.isEmpty()) {
         return;
     }
-    if (KeyMapProfileStore::profileExists(name)) {
+    if (KeyMapProfileStore::profileExists(m_interfaceId, name)) {
         QMessageBox::warning(this, tr("Controls editor"), tr("A profile named \"%1\" already exists.").arg(name));
         return;
     }
@@ -277,12 +308,13 @@ void GameControlsEditor::onNewProfile()
 
     QVector<ControlNode> empty;
     QString error;
-    if (!KeyMapProfileStore::saveProfile(name, m_switchKeyCapture->boundKeyString(), m_cursorLockKeyCapture->boundKeyString(), empty,
-                                          &error)) {
+    if (!KeyMapProfileStore::saveProfile(m_interfaceId, name, m_switchKeyCapture->boundKeyString(), m_cursorLockKeyCapture->boundKeyString(),
+                                          empty, &error)) {
         QMessageBox::warning(this, tr("Controls editor"), tr("Could not create profile: %1").arg(error));
         return;
     }
     reloadProfileList(name);
+    emit profilesChanged(m_interfaceId);
 }
 
 void GameControlsEditor::onSaveProfile()
@@ -304,8 +336,8 @@ void GameControlsEditor::onSaveProfile()
     }
 
     QString error;
-    if (!KeyMapProfileStore::saveProfile(name, m_switchKeyCapture->boundKeyString(), m_cursorLockKeyCapture->boundKeyString(), nodes,
-                                          &error)) {
+    if (!KeyMapProfileStore::saveProfile(m_interfaceId, name, m_switchKeyCapture->boundKeyString(), m_cursorLockKeyCapture->boundKeyString(),
+                                          nodes, &error)) {
         QMessageBox::warning(this, tr("Controls editor"), tr("Could not save profile: %1").arg(error));
         return;
     }
@@ -314,6 +346,7 @@ void GameControlsEditor::onSaveProfile()
     reloadProfileList(name);
     applyLive();
     setDirty(false);
+    emit profilesChanged(m_interfaceId);
 }
 
 void GameControlsEditor::onCancelEdits()
@@ -323,7 +356,8 @@ void GameControlsEditor::onCancelEdits()
     if (m_dirty
         && QMessageBox::question(this, tr("Discard changes?"),
                                   tr("Revert \"%1\" to its last saved state? Unsaved changes will be lost.")
-                                      .arg(m_currentProfileName.isEmpty() ? tr("(unsaved scheme)") : m_currentProfileName))
+                                      .arg(m_currentProfileName.isEmpty() ? KeyMapProfileStore::defaultProfileDisplayName()
+                                                                           : m_currentProfileName))
                != QMessageBox::Yes) {
         return;
     }
@@ -341,10 +375,11 @@ void GameControlsEditor::onDeleteProfile()
         != QMessageBox::Yes) {
         return;
     }
-    KeyMapProfileStore::deleteProfile(m_currentProfileName);
+    KeyMapProfileStore::deleteProfile(m_interfaceId, m_currentProfileName);
     m_currentProfileName.clear();
     clearMarkers();
     reloadProfileList();
+    emit profilesChanged(m_interfaceId);
 }
 
 void GameControlsEditor::clearMarkers()

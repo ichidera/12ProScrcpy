@@ -122,6 +122,12 @@
 #define SERIAL_WINDOW_RECT_KEY_DEF -1
 #define SERIAL_NICK_NAME_KEY "NickName"
 #define SERIAL_NICK_NAME_DEF "Phone"
+#define SERIAL_GC_MASTER_ENABLED_KEY "GameControlsMasterEnabled"
+#define SERIAL_GC_MASTER_ENABLED_DEF true
+#define SERIAL_GC_ONSCREEN_VISIBLE_KEY "GameControlsOnScreenVisible"
+#define SERIAL_GC_ONSCREEN_VISIBLE_DEF true
+#define SERIAL_GC_OPACITY_PERCENT_KEY "GameControlsOpacityPercent"
+#define SERIAL_GC_OPACITY_PERCENT_DEF 72
 
 // IP history
 #define IP_HISTORY_KEY "IpHistory"
@@ -313,6 +319,25 @@ QString Config::getNickName(const QString &serial)
     name = m_userData->value(SERIAL_NICK_NAME_KEY, SERIAL_NICK_NAME_DEF).toString();
     m_userData->endGroup();
     return name;
+}
+
+void Config::setGameControlsPanelSettings(const QString &serial, bool masterEnabled, bool onScreenVisible, int opacityPercent)
+{
+    m_userData->beginGroup(serial);
+    m_userData->setValue(SERIAL_GC_MASTER_ENABLED_KEY, masterEnabled);
+    m_userData->setValue(SERIAL_GC_ONSCREEN_VISIBLE_KEY, onScreenVisible);
+    m_userData->setValue(SERIAL_GC_OPACITY_PERCENT_KEY, opacityPercent);
+    m_userData->endGroup();
+    m_userData->sync();
+}
+
+void Config::getGameControlsPanelSettings(const QString &serial, bool &masterEnabled, bool &onScreenVisible, int &opacityPercent)
+{
+    m_userData->beginGroup(serial);
+    masterEnabled = m_userData->value(SERIAL_GC_MASTER_ENABLED_KEY, SERIAL_GC_MASTER_ENABLED_DEF).toBool();
+    onScreenVisible = m_userData->value(SERIAL_GC_ONSCREEN_VISIBLE_KEY, SERIAL_GC_ONSCREEN_VISIBLE_DEF).toBool();
+    opacityPercent = m_userData->value(SERIAL_GC_OPACITY_PERCENT_KEY, SERIAL_GC_OPACITY_PERCENT_DEF).toInt();
+    m_userData->endGroup();
 }
 
 int Config::getMaxFps()

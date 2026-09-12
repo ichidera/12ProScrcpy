@@ -157,6 +157,23 @@ bool InputConvertGame::isCurrentCustomKeymap()
     return m_gameMap;
 }
 
+void InputConvertGame::setForceCustomKeymap(bool enabled)
+{
+    if (m_gameMap == enabled) {
+        return;
+    }
+    m_gameMap = enabled;
+    qInfo() << QString("current keymap mode (forced by Game control toggle): %1").arg(m_gameMap ? "custom" : "normal");
+    if (!m_gameMap) {
+        // Same cleanup switchGameMap() does when leaving keymap mode via the
+        // switch key: never leave a hidden/grabbed cursor or a running
+        // look-timer behind.
+        toggleCursorLock(false);
+        stopMouseMoveTimer();
+        mouseMoveStopTouch();
+    }
+}
+
 void InputConvertGame::loadKeyMap(const QString &json)
 {
     m_keyMap.loadKeyMap(json);
@@ -750,24 +767,18 @@ void InputConvertGame::stopMouseMoveTimer()
 
 bool InputConvertGame::switchGameMap()
 {
-    m_gameMap = !m_gameMap;
-    qInfo() << QString("current keymap mode: %1").arg(m_gameMap ? "custom" : "normal");
-
     // NOTE: this key (the "` " / backtick switch key by default) used to also
     // grab and hide the OS cursor here. That coupling is intentionally gone:
     // this key now *only* activates/deactivates the custom keymap (so it
     // "just focuses" input into the scheme, cursor stays visible). Locking
     // and hiding the cursor is a separate, independently-bound action - see
     // toggleCursorLock() / m_cursorLockKey, toggled from keyEvent().
-    if (!m_gameMap) {
-        // Leaving keymap mode always releases any active cursor lock too,
-        // so you never get stuck with a hidden/grabbed cursor after backing
-        // out of the scheme entirely.
-        toggleCursorLock(false);
-        stopMouseMoveTimer();
-        mouseMoveStopTouch();
-    }
-
+    //
+    // This key keeps working exactly as before regardless of whether the
+    // "Game control" UI toggle has also forced the keymap on for as long as
+    // the window has focus - both paths just flip the same m_gameMap flag.
+    setForceCustomKeymap(!m_gameMap);
+    qInfo() << QString("current keymap mode: %1").arg(m_gameMap ? "custom" : "normal");
     return m_gameMap;
 }
 

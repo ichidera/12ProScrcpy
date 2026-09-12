@@ -147,6 +147,12 @@ public:
 
     virtual void updateScript(QString script) = 0;
     virtual bool isCurrentCustomKeymap() = 0;
+    // Forces the current custom keymap on/off directly (see
+    // InputConvertBase::setForceCustomKeymap()) - used by the "Game
+    // control" UI toggle to keep a scheme engaged for as long as the
+    // mirrored window has focus, independent of the switch key (which
+    // keeps working as a manual override regardless of this).
+    virtual void setCustomKeymapForced(bool enabled) = 0;
 };
 
 class IDeviceManage : public QObject {

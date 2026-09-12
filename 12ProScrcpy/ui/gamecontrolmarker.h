@@ -21,6 +21,16 @@ public:
     // Re-place this marker for the given surface size, from its normalized pos().
     void relayout(const QSize &surfaceSize);
 
+    // Used by the persistent "On-screen controls" display (see
+    // GameControlsPanel): a non-interactive marker just shows where a
+    // control lives, at an adjustable transparency, without accepting
+    // drags/edits/context menus - it exists outside of the full editor.
+    void setInteractive(bool interactive);
+    bool isInteractive() const { return m_interactive; }
+
+    // 0-100, matches the "Opacity" slider in the Game controls panel.
+    void setDisplayOpacityPercent(int percent);
+
 signals:
     void moved(GameControlMarker *self);
     void editRequested(GameControlMarker *self);
@@ -46,6 +56,8 @@ private:
     QPoint m_dragStartMouse;
     QPoint m_dragStartWidgetPos;
     bool m_dragging = false;
+    bool m_interactive = true;
+    int m_displayOpacityPercent = 100;
 };
 
 #endif // GAMECONTROLMARKER_H
