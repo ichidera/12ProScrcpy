@@ -22,7 +22,8 @@ Adbmirror.zip
 
 QtScrcpy/
 keymap/
-docs/
+docs\12ProScrcpy_sendevent_integration_plan.md
+docs\real-device-adb-sendevent.md
 
 12PROSCRCPY.zip
 12ProScrcpy\12ProScrcpyCore\src\third_party

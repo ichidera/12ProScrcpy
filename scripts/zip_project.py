@@ -82,6 +82,7 @@ def is_hardcoded_excluded(rel: Path) -> bool:
     excluded_roots = (
         '12ProScrcpy/12ProScrcpyCore/src/third_party',
         '12ProScrcpyCore/src/third_party',
+        'docs',
     )
     s = rel.as_posix()
     for root in excluded_roots:
