@@ -71,13 +71,11 @@ void InputConvertNormal::wheelEvent(const QWheelEvent *from, const QSize &frameS
     pos.setX(pos.x() * frameSize.width() / showSize.width());
     pos.setY(pos.y() * frameSize.height() / showSize.height());
 
-    // set data
-    ControlMsg *controlMsg = new ControlMsg(ControlMsg::CMT_INJECT_SCROLL);
-    if (!controlMsg) {
-        return;
+    // Inject as a real touch swipe via `adb shell sendevent` instead of the
+    // old control-socket CMT_INJECT_SCROLL message - see Controller::sendRealScroll.
+    if (m_controller) {
+        m_controller->sendRealScroll(pos.toPoint(), frameSize, hScroll, vScroll);
     }
-    controlMsg->setInjectScrollMsgData(QRect(pos.toPoint(), frameSize), hScroll, vScroll, convertMouseButtons(from->buttons()));
-    sendControlMsg(controlMsg);
 }
 
 void InputConvertNormal::keyEvent(const QKeyEvent *from, const QSize &frameSize, const QSize &showSize)
@@ -87,8 +85,6 @@ void InputConvertNormal::keyEvent(const QKeyEvent *from, const QSize &frameSize,
     if (!from) {
         return;
     }
-
-    bool repeat = from->isAutoRepeat();
 
     // action
     AndroidKeyeventAction action;
@@ -109,20 +105,23 @@ void InputConvertNormal::keyEvent(const QKeyEvent *from, const QSize &frameSize,
         return;
     }
 
-    // set data
-    ControlMsg *controlMsg = new ControlMsg(ControlMsg::CMT_INJECT_KEYCODE);
-    if (!controlMsg) {
+    // `input keyevent` (root-elevated, same su session as touch) fires an
+    // atomic press+release and takes a bare keycode with no metastate flag -
+    // there's no way to convey Shift/Ctrl/Alt modifiers through it the way
+    // the old ControlMsg socket path's convertMetastate() could. Known
+    // regression versus the socket path: Shift+letter, Ctrl+C, etc. will
+    // not carry the modifier through this fallback.
+    //
+    // Fire only on physical key-down; Qt's own auto-repeat (isAutoRepeat())
+    // re-fires KeyPress while a key is held, so a held key still produces
+    // repeated presses server-side without us needing to track hold state
+    // ourselves the way m_repeat used to.
+    if (action != AKEY_EVENT_ACTION_DOWN) {
         return;
     }
-
-    if (repeat) {
-        m_repeat++;
-    } else {
-        m_repeat = 0;
+    if (m_controller) {
+        m_controller->sendRealKeyEvent(static_cast<int>(keyCode));
     }
-
-    controlMsg->setInjectKeycodeMsgData(action, keyCode, m_repeat, convertMetastate(from->modifiers()));
-    sendControlMsg(controlMsg);
 }
 
 AndroidMotioneventButtons InputConvertNormal::convertMouseButtons(Qt::MouseButtons buttonState)

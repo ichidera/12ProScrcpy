@@ -1,6 +1,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QDebug>
+#include <QPointF>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QTimer>
@@ -409,6 +410,53 @@ void Controller::flushPendingTouchMoves()
     }
 }
 
+QPoint Controller::mapFrameToRawTouch(const QPoint &framePos, const QSize &frameSize) const
+{
+    if (!m_realTouchSession || frameSize.width() <= 0 || frameSize.height() <= 0) {
+        return QPoint(0, 0);
+    }
+
+    const AdbSendEventSession::TouchProfile &profile = m_realTouchSession->touchProfile();
+    const bool frameIsLandscape = frameSize.width() > frameSize.height();
+    // Touch panel's native coordinate space is portrait. A landscape
+    // mirrored frame (width() > height()) needs pre-rotation before
+    // scaling to native panel coords.
+    //
+    // ROTATION_270 was verified against on-device tap tests and uses the
+    // swap formula below. ROTATION_90 is the mirror-image chirality of
+    // ROTATION_270 (180 degrees apart from it, not from portrait) - rather
+    // than an independently-derived formula, it's computed as the
+    // point-reflection of the 270 formula through the panel's center
+    // (xMax - rx270, yMax - ry270). This is a reasonable hypothesis given
+    // the relationship between the two rotations, but has NOT yet been
+    // independently confirmed against real tap data the way 270 was -
+    // recalibrate from fresh tap samples if this doesn't line up on-device.
+    double rx = 0.0;
+    double ry = 0.0;
+    if (frameIsLandscape) {
+        const double rx270 = framePos.y() * static_cast<double>(profile.xMax) / frameSize.height();
+        const double ry270 = profile.yMax - (framePos.x() * static_cast<double>(profile.yMax) / frameSize.width());
+
+        if (m_deviceRotation == DeviceRotation::Rotation90) {
+            rx = profile.xMax - rx270;
+            ry = profile.yMax - ry270;
+        } else {
+            // ROTATION_270, and the fallback for Rotation0/180/Unknown
+            // reported while the frame is still landscape (e.g. before the
+            // first poll completes) - matches the verified formula.
+            rx = rx270;
+            ry = ry270;
+        }
+    } else {
+        rx = framePos.x() * static_cast<double>(profile.xMax) / frameSize.width();
+        ry = framePos.y() * static_cast<double>(profile.yMax) / frameSize.height();
+    }
+
+    const int x = qBound(0, static_cast<int>(qRound(rx)), profile.xMax);
+    const int y = qBound(0, static_cast<int>(qRound(ry)), profile.yMax);
+    return QPoint(x, y);
+}
+
 void Controller::sendRealTouch(int slot, AndroidMotioneventAction action, QPoint framePos, const QSize &frameSize)
 {
     if (m_cameraMode) {
@@ -422,48 +470,9 @@ void Controller::sendRealTouch(int slot, AndroidMotioneventAction action, QPoint
         return;
     }
 
-    const AdbSendEventSession::TouchProfile &profile = m_realTouchSession->touchProfile();
-    int rawX = 0;
-    int rawY = 0;
-    if (frameSize.width() > 0 && frameSize.height() > 0) {
-        const bool frameIsLandscape = frameSize.width() > frameSize.height();
-        // Touch panel's native coordinate space is portrait. A landscape
-        // mirrored frame (width() > height()) needs pre-rotation before
-        // scaling to native panel coords.
-        //
-        // ROTATION_270 was verified against on-device tap tests and uses
-        // the swap formula below. ROTATION_90 is the mirror-image
-        // chirality of ROTATION_270 (180 degrees apart from it, not from
-        // portrait) - rather than an independently-derived formula, it's
-        // computed as the point-reflection of the 270 formula through the
-        // panel's center (xMax - rx270, yMax - ry270). This is a
-        // reasonable hypothesis given the relationship between the two
-        // rotations, but has NOT yet been independently confirmed against
-        // real tap data the way 270 was - recalibrate from fresh tap
-        // samples if this doesn't line up on-device.
-        if (frameIsLandscape) {
-            double rx = 0.0;
-            double ry = 0.0;
-            const double rx270 = framePos.y() * static_cast<double>(profile.xMax) / frameSize.height();
-            const double ry270 = profile.yMax - (framePos.x() * static_cast<double>(profile.yMax) / frameSize.width());
-
-            if (m_deviceRotation == DeviceRotation::Rotation90) {
-                rx = profile.xMax - rx270;
-                ry = profile.yMax - ry270;
-            } else {
-                // ROTATION_270, and the fallback for Rotation0/180/Unknown
-                // reported while the frame is still landscape (e.g. before
-                // the first poll completes) - matches the verified formula.
-                rx = rx270;
-                ry = ry270;
-            }
-            rawX = qBound(0, static_cast<int>(qRound(rx)), profile.xMax);
-            rawY = qBound(0, static_cast<int>(qRound(ry)), profile.yMax);
-        } else {
-            rawX = qBound(0, static_cast<int>(qRound(framePos.x() * static_cast<double>(profile.xMax) / frameSize.width())), profile.xMax);
-            rawY = qBound(0, static_cast<int>(qRound(framePos.y() * static_cast<double>(profile.yMax) / frameSize.height())), profile.yMax);
-        }
-    }
+    const QPoint raw = mapFrameToRawTouch(framePos, frameSize);
+    const int rawX = raw.x();
+    const int rawY = raw.y();
 
     switch (action) {
     case AMOTION_EVENT_ACTION_DOWN:
@@ -480,6 +489,54 @@ void Controller::sendRealTouch(int slot, AndroidMotioneventAction action, QPoint
     default:
         break;
     }
+}
+
+void Controller::sendRealScroll(QPoint framePos, const QSize &frameSize, float hScroll, float vScroll)
+{
+    if (m_cameraMode) {
+        return;
+    }
+    if (qFuzzyIsNull(hScroll) && qFuzzyIsNull(vScroll)) {
+        return;
+    }
+
+    ensureRealTouchSession();
+    if (!m_realTouchSession || !m_realTouchSession->isRunning()) {
+        qWarning() << "Controller::sendRealScroll: sendevent session not running, dropping scroll event";
+        return;
+    }
+    if (frameSize.width() <= 0 || frameSize.height() <= 0) {
+        return;
+    }
+
+    // Converted into a short synthetic swipe at the cursor position through
+    // the same real touchscreen channel used for taps/drags, rather than a
+    // framework scroll command - this is what makes it feel like a real
+    // finger flick instead of a synthesized "scroll" event. Wheel-up
+    // (positive vScroll, Qt's convention) scrolls content up, which on a
+    // real touchscreen is a swipe moving upward (decreasing Y) - the same
+    // relationship mouse-to-touchpad emulation drivers use.
+    constexpr double kPixelsPerNotch = 90.0;
+    constexpr int kSteps = 4;
+
+    QPointF endFramePos = QPointF(framePos) - QPointF(hScroll * kPixelsPerNotch, vScroll * kPixelsPerNotch);
+    // Keep the synthetic swipe's endpoint inside the mirrored frame so it
+    // doesn't map to an out-of-bounds raw coordinate.
+    endFramePos.setX(qBound(0.0, endFramePos.x(), static_cast<double>(frameSize.width())));
+    endFramePos.setY(qBound(0.0, endFramePos.y(), static_cast<double>(frameSize.height())));
+
+    const QPoint startRaw = mapFrameToRawTouch(framePos, frameSize);
+    const QPoint endRaw = mapFrameToRawTouch(endFramePos.toPoint(), frameSize);
+
+    const int slot = kMouseTouchSlot;
+    m_realTouchSession->touchDown(slot, slot + 1, startRaw.x(), startRaw.y());
+    for (int i = 1; i <= kSteps; ++i) {
+        const double t = static_cast<double>(i) / kSteps;
+        const int ix = static_cast<int>(qRound(startRaw.x() + (endRaw.x() - startRaw.x()) * t));
+        const int iy = static_cast<int>(qRound(startRaw.y() + (endRaw.y() - startRaw.y()) * t));
+        m_realTouchSession->touchMove(slot, ix, iy);
+    }
+    m_realTouchSession->touchUp(slot);
 }
 
 void Controller::mouseEvent(const QMouseEvent *from, const QSize &frameSize, const QSize &showSize)

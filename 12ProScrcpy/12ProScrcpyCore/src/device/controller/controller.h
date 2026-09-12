@@ -39,6 +39,13 @@ public:
     // touch/click path now - see docs/real-device-adb-sendevent.md.
     void sendRealTouch(int slot, AndroidMotioneventAction action, QPoint framePos, const QSize &frameSize);
 
+    // Scroll wheel, translated into a short synthetic swipe on the same raw
+    // touch channel as sendRealTouch() - there's no root-shell equivalent
+    // of a "scroll" input event, so this reuses the verified touch path
+    // instead of any framework fallback, to keep it feeling like a real
+    // finger flick.
+    void sendRealScroll(QPoint framePos, const QSize &frameSize, float hScroll, float vScroll);
+
     // Root-elevated `input keyevent` fallback (same su session as touch),
     // used for keys with no confirmed raw-sendevent hardware node on this
     // device. postKeyCodeClick() routes through this internally; exposed
@@ -131,6 +138,7 @@ private:
     };
     void ensureTouchMoveThrottle();
     void flushPendingTouchMoves();
+    QPoint mapFrameToRawTouch(const QPoint &framePos, const QSize &frameSize) const;
 
 private:
     QPointer<Receiver> m_receiver;
