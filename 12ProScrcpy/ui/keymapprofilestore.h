@@ -52,6 +52,12 @@ struct ControlNode
     float lookSpeedX = 18.0f;
     float lookSpeedY = 8.0f;
     QString smallEyesKey; // optional toggle key, empty = disabled
+    // Held (not toggled) to temporarily free the cursor and pause
+    // shoot-mode - same idea as BlueStacks' "Suspend" key on Aim, Pan and
+    // Shoot: lets you glance at a menu without fully leaving shoot-mode via
+    // the persistent cursorLockKey toggle. Empty = disabled. FreeLook/
+    // AimPanShoot only.
+    QString suspendKey;
 
     QString label; // shown on the marker/list; auto-filled if left empty
 };

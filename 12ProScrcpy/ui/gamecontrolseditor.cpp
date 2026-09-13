@@ -3,6 +3,7 @@
 #include <QFontMetrics>
 #include <QFrame>
 #include <QGridLayout>
+#include <QHash>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QInputDialog>
@@ -761,6 +762,141 @@ bool GameControlsEditor::hasLookNode(GameControlMarker *exclude) const
     return false;
 }
 
+QStringList GameControlsEditor::collectOtherKeys(const GameControlMarker *exclude) const
+{
+    QStringList keys;
+    auto addIfBound = [&keys](const QString &k) {
+        if (!k.isEmpty()) {
+            keys << k;
+        }
+    };
+    for (const QPointer<GameControlMarker> &marker : m_markers) {
+        if (!marker || marker.data() == exclude) {
+            continue;
+        }
+        const ControlNode &n = marker->node();
+        addIfBound(n.key);
+        addIfBound(n.upKey);
+        addIfBound(n.downKey);
+        addIfBound(n.leftKey);
+        addIfBound(n.rightKey);
+        addIfBound(n.smallEyesKey);
+        addIfBound(n.suspendKey);
+    }
+    return keys;
+}
+
+QString GameControlsEditor::validateNodeKeys(const ControlNode &node, const QStringList &otherKeys) const
+{
+    struct Slot
+    {
+        QString value;
+        QString label;
+    };
+    QVector<Slot> slots;
+    auto add = [&slots](const QString &v, const QString &label) {
+        if (!v.isEmpty()) {
+            slots.push_back({ v, label });
+        }
+    };
+    switch (node.action) {
+    case ControlActionKind::TapSpot:
+    case ControlActionKind::RepeatedTap:
+    case ControlActionKind::DragSwipe:
+        add(node.key, tr("Key / mouse button"));
+        break;
+    case ControlActionKind::DPad:
+        add(node.upKey, tr("Up key"));
+        add(node.downKey, tr("Down key"));
+        add(node.leftKey, tr("Left key"));
+        add(node.rightKey, tr("Right key"));
+        break;
+    case ControlActionKind::FreeLook:
+    case ControlActionKind::AimPanShoot:
+        add(node.key, tr("Shoot button"));
+        add(node.smallEyesKey, tr("Precision-aim toggle"));
+        add(node.suspendKey, tr("Suspend shoot-mode"));
+        break;
+    }
+
+    // A node can't use the same key for two of its own slots (e.g. DPad's
+    // up/down, or AimPanShoot's shoot button and its own suspend key) -
+    // each would be ambiguous about which one you meant.
+    for (int i = 0; i < slots.size(); ++i) {
+        for (int j = i + 1; j < slots.size(); ++j) {
+            if (slots[i].value == slots[j].value) {
+                return tr("%1 and %2 can't share the same key (%3).").arg(slots[i].label, slots[j].label, slots[i].value);
+            }
+        }
+    }
+
+    // Neither the touch-mode toggle nor the shoot-mode (cursor lock) key
+    // can double as a control binding - both are already spoken for.
+    const QString switchKey = m_switchKeyCapture ? m_switchKeyCapture->boundKeyString() : QString();
+    const QString cursorLockKey = m_cursorLockKeyCapture ? m_cursorLockKeyCapture->boundKeyString() : QString();
+    for (const Slot &slot : slots) {
+        if (!switchKey.isEmpty() && slot.value == switchKey) {
+            return tr("%1 can't use %2 - that's the touch-mode toggle key. Pick a different key, or change the toggle key first.")
+                .arg(slot.label, slot.value);
+        }
+        if (!cursorLockKey.isEmpty() && slot.value == cursorLockKey) {
+            return tr("%1 can't use %2 - that's the shoot-mode (lock/hide cursor) key. Pick a different key, or change that key first.")
+                .arg(slot.label, slot.value);
+        }
+    }
+
+    // Keyboard keys are free to repeat across different controls (BlueStacks/
+    // MEmu/LDPlayer all allow this too - e.g. binding both a movement key
+    // and an ability to the same letter is normal since they're never
+    // ambiguous in practice). Mouse buttons are different: a single
+    // physical click can only mean one thing, so each button - Left, Right,
+    // Middle, whichever - is capped at one binding for the whole scheme.
+    // This still allows e.g. Left = fire and Right = aim at the same time
+    // (each button individually unique), matching how LDPlayer's Call of
+    // Duty: Mobile preset binds them.
+    QHash<QString, int> mouseButtonUseCount;
+    auto tallyIfMouse = [&mouseButtonUseCount](const QString &v) {
+        bool isMouse = false;
+        if (KeyMapProfileStore::stringToKey(v, nullptr, &isMouse) && isMouse) {
+            ++mouseButtonUseCount[v];
+        }
+    };
+    for (const QString &k : otherKeys) {
+        tallyIfMouse(k);
+    }
+    for (const Slot &slot : slots) {
+        tallyIfMouse(slot.value);
+    }
+    for (auto it = mouseButtonUseCount.constBegin(); it != mouseButtonUseCount.constEnd(); ++it) {
+        if (it.value() > 1) {
+            return tr("%1 is already bound to another control in this scheme. Each mouse button can only be bound to one control "
+                      "at a time.")
+                .arg(it.key());
+        }
+    }
+
+    return QString();
+}
+
+bool GameControlsEditor::captureValidNode(ControlNode node, const GameControlMarker *exclude, ControlNode &outNode)
+{
+    const QStringList otherKeys = collectOtherKeys(exclude);
+    while (true) {
+        ControlInspectorDialog dialog(node, this);
+        if (dialog.exec() != QDialog::Accepted) {
+            return false;
+        }
+        ControlNode candidate = dialog.result();
+        const QString error = validateNodeKeys(candidate, otherKeys);
+        if (error.isEmpty()) {
+            outNode = candidate;
+            return true;
+        }
+        QMessageBox::warning(this, tr("Invalid key binding"), error);
+        node = candidate; // keep every other field they set, only the key needs fixing
+    }
+}
+
 void GameControlsEditor::handleControlDropped(ControlActionKind kind, QPointF normPos)
 {
     if ((kind == ControlActionKind::FreeLook || kind == ControlActionKind::AimPanShoot) && hasLookNode()) {
@@ -778,12 +914,11 @@ void GameControlsEditor::handleControlDropped(ControlActionKind kind, QPointF no
         node.key = QStringLiteral("LeftButton");
     }
 
-    ControlInspectorDialog dialog(node, this);
-    if (dialog.exec() != QDialog::Accepted) {
+    ControlNode result;
+    if (!captureValidNode(node, nullptr, result)) {
         return;
     }
-
-    addMarkerForNode(dialog.result());
+    addMarkerForNode(result);
     setDirty(true);
 }
 
@@ -792,11 +927,11 @@ void GameControlsEditor::editMarker(GameControlMarker *marker)
     if (!marker) {
         return;
     }
-    ControlInspectorDialog dialog(marker->node(), this);
-    if (dialog.exec() != QDialog::Accepted) {
+    ControlNode result;
+    if (!captureValidNode(marker->node(), marker, result)) {
         return;
     }
-    marker->setNode(dialog.result());
+    marker->setNode(result);
     setDirty(true);
 }
 

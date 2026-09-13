@@ -85,6 +85,15 @@ void InputConvertGame::keyEvent(const QKeyEvent *from, const QSize &frameSize, c
         return;
     }
 
+    // "Suspend" (BlueStacks' term): held, not toggled - frees the cursor
+    // for as long as it's down, then snaps back into shoot-mode on release
+    // if it was actually engaged beforehand. Auto-repeat presses are
+    // ignored so holding it doesn't spam handleSuspendKey(true).
+    if (m_gameMap && m_suspendKey != -1 && !from->isAutoRepeat() && from->key() == m_suspendKey) {
+        handleSuspendKey(QEvent::KeyPress == from->type());
+        return;
+    }
+
     const KeyMap::KeyMapNode &node = m_keyMap.getKeyMapNodeKey(from->key());
     // 处理特殊按键：可以释放出鼠标的按键
     if (m_needBackMouseMove && KeyMap::KMT_CLICK == node.type && node.data.click.switchMap) {
@@ -169,6 +178,7 @@ void InputConvertGame::setForceCustomKeymap(bool enabled)
         // switch key: never leave a hidden/grabbed cursor or a running
         // look-timer behind.
         toggleCursorLock(false);
+        m_cursorLockedBeforeSuspend = false;
         stopMouseMoveTimer();
         mouseMoveStopTouch();
     }
@@ -178,23 +188,52 @@ void InputConvertGame::loadKeyMap(const QString &json)
 {
     m_keyMap.loadKeyMap(json);
 
-    // "cursorLockKey" is parsed here directly (rather than inside KeyMap)
-    // because it isn't a touch-mapping node at all - it's InputConvertGame's
-    // own grab/hide toggle. Keeping it out of KeyMap's schema means this
-    // stays a small, self-contained addition instead of a KeyMap engine
-    // change. Falls back to F1 if absent/invalid so existing profiles keep
-    // working unchanged.
+    // "cursorLockKey" / "shootButton" / "mouseMoveMap.suspendKey" are parsed
+    // here directly (rather than inside KeyMap) because none of them are
+    // touch-mapping nodes - they're InputConvertGame's own grab/hide toggle,
+    // the one mouse button gated behind shoot-mode being engaged, and the
+    // hold-to-pause key, respectively. Keeping them out of KeyMap's schema
+    // means this stays a small, self-contained addition instead of a KeyMap
+    // engine change. All fall back to "disabled/default" if absent/invalid
+    // so existing profiles keep working unchanged.
     m_cursorLockKey = Qt::Key_F1;
+    m_suspendKey = -1;
+    m_shootButtonCode = -1;
+    m_cursorLockedBeforeSuspend = false;
     QJsonParseError parseError;
     QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8(), &parseError);
     if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
-        const QString keyStr = doc.object().value("cursorLockKey").toString();
-        if (!keyStr.isEmpty()) {
+        const QJsonObject root = doc.object();
+
+        const QString cursorLockStr = root.value("cursorLockKey").toString();
+        if (!cursorLockStr.isEmpty()) {
             QMetaEnum me = QMetaEnum::fromType<Qt::Key>();
             bool ok = false;
-            int key = me.keyToValue(keyStr.toUtf8().constData(), &ok);
+            int key = me.keyToValue(cursorLockStr.toUtf8().constData(), &ok);
             if (ok) {
                 m_cursorLockKey = key;
+            }
+        }
+
+        const QString shootButtonStr = root.value("shootButton").toString();
+        if (!shootButtonStr.isEmpty()) {
+            QMetaEnum me = QMetaEnum::fromType<Qt::MouseButtons>();
+            bool ok = false;
+            int btn = me.keyToValue(shootButtonStr.toUtf8().constData(), &ok);
+            if (ok) {
+                m_shootButtonCode = btn;
+            }
+        }
+
+        if (root.value("mouseMoveMap").isObject()) {
+            const QString suspendStr = root.value("mouseMoveMap").toObject().value("suspendKey").toString();
+            if (!suspendStr.isEmpty()) {
+                QMetaEnum me = QMetaEnum::fromType<Qt::Key>();
+                bool ok = false;
+                int key = me.keyToValue(suspendStr.toUtf8().constData(), &ok);
+                if (ok) {
+                    m_suspendKey = key;
+                }
             }
         }
     }
@@ -597,6 +636,17 @@ void InputConvertGame::processAndroidKey(AndroidKeycode androidKey, const QKeyEv
 
 bool InputConvertGame::processMouseClick(const QMouseEvent *from)
 {
+    // Only the scheme's one designated "shoot" button (see
+    // ControlActionKind::AimPanShoot / the "shootButton" field loadKeyMap()
+    // parses) is gated behind shoot-mode - any other mouse button bound to
+    // an ordinary control (a Tap spot, say) fires immediately as normal,
+    // exactly like a keyboard-bound one would. Left click only defaults to
+    // being that button; whichever button the Controls editor's "Shoot
+    // button" field is actually set to is what's checked here.
+    if (m_shootButtonCode != -1 && static_cast<int>(from->button()) == m_shootButtonCode && !m_cursorLocked) {
+        return false;
+    }
+
     const KeyMap::KeyMapNode &node = m_keyMap.getKeyMapNodeMouse(from->button());
     if (KeyMap::KMT_INVALID == node.type) {
         return false;
@@ -799,6 +849,22 @@ void InputConvertGame::toggleCursorLock(bool lock)
     emit grabCursor(lock);
 #endif
     hideMouseCursor(lock);
+}
+
+void InputConvertGame::handleSuspendKey(bool pressed)
+{
+    if (pressed) {
+        // Remember whether shoot-mode was actually on so releasing this key
+        // doesn't engage it if it wasn't - "suspend" pauses, it doesn't
+        // itself turn shoot-mode on.
+        m_cursorLockedBeforeSuspend = m_cursorLocked;
+        if (m_cursorLocked) {
+            toggleCursorLock(false);
+        }
+    } else if (m_cursorLockedBeforeSuspend) {
+        toggleCursorLock(true);
+        m_cursorLockedBeforeSuspend = false;
+    }
 }
 
 void InputConvertGame::hideMouseCursor(bool hide)

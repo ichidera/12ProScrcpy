@@ -91,6 +91,30 @@ private:
     void ensureOverlay();
     void setDirty(bool dirty);
 
+    // Key-conflict checks shared by both "drop a new control" and "edit an
+    // existing one": every key slot a node uses (it can have several - e.g.
+    // DPad's four directions) is checked against every *other* node's key
+    // slots, plus the two reserved keys below. Keyboard keys are free to
+    // repeat across different controls; only the left mouse button is
+    // capped at one binding scheme-wide (see InputConvertGame::
+    // processMouseClick(), which only forwards a left click at all while
+    // shoot-mode/cursor-lock is engaged - anything else bound to it would
+    // silently never fire outside that mode anyway).
+    //
+    // Returns an empty string when `node` is fine to accept, or a
+    // human-readable reason it isn't.
+    QString validateNodeKeys(const ControlNode &node, const QStringList &otherKeys) const;
+    // Every bound key/mouse-button string in use by every marker except
+    // `exclude` (pass nullptr to include all of them, e.g. for a brand new
+    // control that isn't a marker yet).
+    QStringList collectOtherKeys(const GameControlMarker *exclude) const;
+    // Repeatedly shows `dialog` until its result passes validateNodeKeys()
+    // or the user cancels - preserves whatever else they'd edited (offsets,
+    // repeat count, etc.) across a rejected attempt instead of discarding
+    // it. Returns true (with `outNode` filled in) iff the user ended up
+    // accepting a valid node; false means they cancelled.
+    bool captureValidNode(ControlNode node, const GameControlMarker *exclude, ControlNode &outNode);
+
 private:
     QString m_serial;
     QString m_interfaceId;   // Android package id this editor's profiles belong to

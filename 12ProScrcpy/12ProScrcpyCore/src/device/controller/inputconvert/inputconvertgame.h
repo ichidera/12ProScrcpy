@@ -79,6 +79,13 @@ protected:
     // from the master switch key. Bound to m_cursorLockKey (default F1,
     // overridable via the "cursorLockKey" field in the keymap JSON).
     void toggleCursorLock(bool lock);
+    // BlueStacks-style "Suspend": while m_suspendKey is held, cursor lock
+    // is force-released regardless of the persistent toggle above, then
+    // restored automatically on release if it was actually engaged when
+    // the key went down. Bound to m_suspendKey (per-scheme, optional -
+    // see ControlNode::suspendKey / the "Suspend shoot-mode (hold)" field
+    // in the Controls editor).
+    void handleSuspendKey(bool pressed);
 
     void getDelayQueue(const QPointF& start, const QPointF& end,
                        const double& distanceStep, const double& posStepconst,
@@ -98,6 +105,9 @@ private:
     bool m_gameMap = false;
     bool m_cursorLocked = false;
     int m_cursorLockKey = Qt::Key_F1; // rebindable via loadKeyMap()'s "cursorLockKey"
+    int m_suspendKey = -1;            // -1 = disabled; from loadKeyMap()'s "mouseMoveMap.suspendKey"
+    bool m_cursorLockedBeforeSuspend = false; // so releasing the suspend key only re-locks if it was actually locked before
+    int m_shootButtonCode = -1; // Qt::MouseButton value, -1 = none; from loadKeyMap()'s "shootButton"
     bool m_needBackMouseMove = false;
     int m_multiTouchID[MULTI_TOUCH_MAX_NUM] = { 0 };
     KeyMap m_keyMap;

@@ -244,7 +244,29 @@ QString KeyMapProfileStore::toJson(const QString &switchKey, const QString &curs
             QJsonObject smallEyes = clickJson(node.smallEyesKey, node.pos, false);
             mouseMoveMap.insert("smallEyes", smallEyes);
         }
+        if (!node.suspendKey.isEmpty()) {
+            // Plain string, not clickJson()-wrapped: like cursorLockKey,
+            // this is a hold-modifier InputConvertGame reads directly, not
+            // an actual touch/tap node for KeyMap to dispatch.
+            mouseMoveMap.insert("suspendKey", node.suspendKey);
+        }
         root.insert("mouseMoveMap", mouseMoveMap);
+
+        // Read by InputConvertGame::loadKeyMap() directly, same idea as
+        // cursorLockKey: tells the engine which single mouse button (if
+        // any) is this scheme's "shoot" button, so that button alone is
+        // gated behind shoot-mode being engaged (see "Left click mouse
+        // only fires when shoot-mode is toggled" behavior in
+        // InputConvertGame::processMouseClick()). Left empty when the
+        // shoot action is bound to a keyboard key instead - nothing to
+        // gate in that case.
+        if (node.action == ControlActionKind::AimPanShoot) {
+            const QString shootKey = node.key.isEmpty() ? QStringLiteral("LeftButton") : node.key;
+            bool isMouse = false;
+            if (stringToKey(shootKey, nullptr, &isMouse) && isMouse) {
+                root.insert("shootButton", shootKey);
+            }
+        }
         break;
     }
 
@@ -351,6 +373,7 @@ bool KeyMapProfileStore::fromJson(const QString &json, QString &switchKey, QStri
         if (mouseMoveMap.contains("smallEyes") && mouseMoveMap.value("smallEyes").isObject()) {
             lookNode.smallEyesKey = mouseMoveMap.value("smallEyes").toObject().value("key").toString();
         }
+        lookNode.suspendKey = mouseMoveMap.value("suspendKey").toString();
         haveLookNode = true;
     }
 

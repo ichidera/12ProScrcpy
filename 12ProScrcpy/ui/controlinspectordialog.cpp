@@ -3,7 +3,6 @@
 #include <QFormLayout>
 #include <QKeyEvent>
 #include <QLabel>
-#include <QLineEdit>
 #include <QMouseEvent>
 #include <QSpinBox>
 #include <QVBoxLayout>
@@ -112,12 +111,6 @@ ControlInspectorDialog::ControlInspectorDialog(const ControlNode &node, QWidget 
 void ControlInspectorDialog::buildUi()
 {
     auto *layout = new QVBoxLayout(this);
-    auto *form = new QFormLayout();
-    layout->addLayout(form);
-
-    m_labelEdit = new QLineEdit(m_node.label, this);
-    m_labelEdit->setPlaceholderText(KeyMapProfileStore::actionLabel(m_node.action));
-    form->addRow(tr("Name"), m_labelEdit);
 
     QWidget *fields = buildFieldsForAction();
     if (fields) {
@@ -240,6 +233,14 @@ QWidget *ControlInspectorDialog::buildFieldsForAction()
         m_smallEyesCapture = new KeyCaptureButton(w);
         m_smallEyesCapture->setBoundKeyString(m_node.smallEyesKey);
         form->addRow(tr("Precision-aim toggle (optional)"), m_smallEyesCapture);
+
+        // BlueStacks calls this "Suspend": hold it to instantly free the
+        // cursor and pause shoot-mode, then let go to resume right where
+        // you left off - quicker than fully toggling shoot-mode off and
+        // back on with the lock/hide-cursor key for a quick menu glance.
+        m_suspendKeyCapture = new KeyCaptureButton(w);
+        m_suspendKeyCapture->setBoundKeyString(m_node.suspendKey);
+        form->addRow(tr("Suspend shoot-mode (hold, optional)"), m_suspendKeyCapture);
         break;
     }
     }
@@ -250,7 +251,6 @@ QWidget *ControlInspectorDialog::buildFieldsForAction()
 ControlNode ControlInspectorDialog::result() const
 {
     ControlNode node = m_node;
-    node.label = m_labelEdit->text().trimmed();
 
     switch (node.action) {
     case ControlActionKind::TapSpot:
@@ -282,6 +282,7 @@ ControlNode ControlInspectorDialog::result() const
         node.lookSpeedX = static_cast<float>(m_lookSpeedXSpin->value());
         node.lookSpeedY = static_cast<float>(m_lookSpeedYSpin->value());
         node.smallEyesKey = m_smallEyesCapture->boundKeyString();
+        node.suspendKey = m_suspendKeyCapture->boundKeyString();
         break;
     }
 

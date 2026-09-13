@@ -38,7 +38,6 @@ private:
     bool m_capturing = false;
 };
 
-class QLineEdit;
 class QSpinBox;
 class QDoubleSpinBox;
 class QLabel;
@@ -59,8 +58,6 @@ private:
 private:
     ControlNode m_node;
 
-    QLineEdit *m_labelEdit = nullptr;
-
     // shown depending on action
     KeyCaptureButton *m_keyCapture = nullptr;             // TapSpot / RepeatedTap / DragSwipe / AimPanShoot
     KeyCaptureButton *m_upKeyCapture = nullptr;            // DPad
@@ -77,6 +74,7 @@ private:
     QDoubleSpinBox *m_lookSpeedXSpin = nullptr;             // FreeLook / AimPanShoot
     QDoubleSpinBox *m_lookSpeedYSpin = nullptr;             // FreeLook / AimPanShoot
     KeyCaptureButton *m_smallEyesCapture = nullptr;         // FreeLook / AimPanShoot (optional)
+    KeyCaptureButton *m_suspendKeyCapture = nullptr;        // FreeLook / AimPanShoot (optional) - hold to pause shoot-mode
 };
 
 #endif // CONTROLINSPECTORDIALOG_H
