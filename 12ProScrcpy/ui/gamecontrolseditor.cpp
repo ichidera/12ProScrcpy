@@ -788,15 +788,12 @@ QStringList GameControlsEditor::collectOtherKeys(const GameControlMarker *exclud
 
 QString GameControlsEditor::validateNodeKeys(const ControlNode &node, const QStringList &otherKeys) const
 {
-    struct Slot
-    {
-        QString value;
-        QString label;
-    };
-    QVector<Slot> slots;
-    auto add = [&slots](const QString &v, const QString &label) {
+    QStringList slotValues;
+    QStringList slotLabels;
+    auto add = [&slotValues, &slotLabels](const QString &v, const QString &label) {
         if (!v.isEmpty()) {
-            slots.push_back({ v, label });
+            slotValues << v;
+            slotLabels << label;
         }
     };
     switch (node.action) {
@@ -822,10 +819,10 @@ QString GameControlsEditor::validateNodeKeys(const ControlNode &node, const QStr
     // A node can't use the same key for two of its own slots (e.g. DPad's
     // up/down, or AimPanShoot's shoot button and its own suspend key) -
     // each would be ambiguous about which one you meant.
-    for (int i = 0; i < slots.size(); ++i) {
-        for (int j = i + 1; j < slots.size(); ++j) {
-            if (slots[i].value == slots[j].value) {
-                return tr("%1 and %2 can't share the same key (%3).").arg(slots[i].label, slots[j].label, slots[i].value);
+    for (int i = 0; i < slotValues.size(); ++i) {
+        for (int j = i + 1; j < slotValues.size(); ++j) {
+            if (slotValues[i] == slotValues[j]) {
+                return tr("%1 and %2 can't share the same key (%3).").arg(slotLabels[i], slotLabels[j], slotValues[i]);
             }
         }
     }
@@ -834,14 +831,14 @@ QString GameControlsEditor::validateNodeKeys(const ControlNode &node, const QStr
     // can double as a control binding - both are already spoken for.
     const QString switchKey = m_switchKeyCapture ? m_switchKeyCapture->boundKeyString() : QString();
     const QString cursorLockKey = m_cursorLockKeyCapture ? m_cursorLockKeyCapture->boundKeyString() : QString();
-    for (const Slot &slot : slots) {
-        if (!switchKey.isEmpty() && slot.value == switchKey) {
+    for (int i = 0; i < slotValues.size(); ++i) {
+        if (!switchKey.isEmpty() && slotValues[i] == switchKey) {
             return tr("%1 can't use %2 - that's the touch-mode toggle key. Pick a different key, or change the toggle key first.")
-                .arg(slot.label, slot.value);
+                .arg(slotLabels[i], slotValues[i]);
         }
-        if (!cursorLockKey.isEmpty() && slot.value == cursorLockKey) {
+        if (!cursorLockKey.isEmpty() && slotValues[i] == cursorLockKey) {
             return tr("%1 can't use %2 - that's the shoot-mode (lock/hide cursor) key. Pick a different key, or change that key first.")
-                .arg(slot.label, slot.value);
+                .arg(slotLabels[i], slotValues[i]);
         }
     }
 
@@ -864,8 +861,8 @@ QString GameControlsEditor::validateNodeKeys(const ControlNode &node, const QStr
     for (const QString &k : otherKeys) {
         tallyIfMouse(k);
     }
-    for (const Slot &slot : slots) {
-        tallyIfMouse(slot.value);
+    for (const QString &v : slotValues) {
+        tallyIfMouse(v);
     }
     for (auto it = mouseButtonUseCount.constBegin(); it != mouseButtonUseCount.constEnd(); ++it) {
         if (it.value() > 1) {
