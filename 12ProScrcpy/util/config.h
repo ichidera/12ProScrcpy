@@ -59,6 +59,7 @@ public:
     QString getPushFilePath();
     QString getServerPath();
     QString getAdbPath();
+    bool getRawInputDaemonEnabled();
     QString getLogLevel();
     QString getCodecOptions();
     QString getCodecName();

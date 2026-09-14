@@ -34,6 +34,11 @@ struct DeviceParams {
     CameraFacing cameraFacing = CAMERA_FACING_BACK;
     QString cameraId = "";            // 指定相机 ID，空值时按 cameraFacing 选择
     bool useReverse = true;           // true:先使用adb reverse，失败后自动使用adb forward；false:直接使用adb forward
+    // Feature toggle for docs/daemon-implementation-plan.md's persistent
+    // raw-input daemon (touch injection). Automatically falls back to the
+    // existing sendevent path if the daemon can't start - see
+    // Controller::ensureRawInputDaemon().
+    bool rawInputDaemonEnabled = true;
     int captureOrientationLock = 0;   // 是否锁定采集方向 0不锁定 1锁定指定方向 2锁定原始方向
     int captureOrientation = 0;       // 采集方向 0 90 180 270
     bool stayAwake = false;           // 是否保持唤醒

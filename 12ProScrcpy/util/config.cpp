@@ -47,6 +47,17 @@
 #define COMMON_CODEC_NAME_KEY "CodecName"
 #define COMMON_CODEC_NAME_DEF ""
 
+// Feature toggle for docs/daemon-implementation-plan.md's persistent
+// raw-input daemon path. Defaults on: Controller::ensureRawInputDaemon()
+// already falls back to the existing AdbSendEventSession sendevent path
+// automatically on any startup failure (plan §2.2), so leaving this true
+// costs nothing when the daemon binary isn't bundled/built - it just fails
+// the "binary not found" check and falls back silently. Exposed as a config
+// switch mainly for the plan's §4 phased-testing / support-troubleshooting
+// case where someone wants to force the old sendevent-only path.
+#define COMMON_RAW_INPUT_DAEMON_ENABLED_KEY "RawInputDaemonEnabled"
+#define COMMON_RAW_INPUT_DAEMON_ENABLED_DEF true
+
 // user config
 #define COMMON_RECORD_KEY "RecordPath"
 #define COMMON_RECORD_DEF ""
@@ -403,6 +414,15 @@ QString Config::getAdbPath()
     adbPath = m_settings->value(COMMON_ADB_PATH_KEY, COMMON_ADB_PATH_DEF).toString();
     m_settings->endGroup();
     return adbPath;
+}
+
+bool Config::getRawInputDaemonEnabled()
+{
+    bool enabled;
+    m_settings->beginGroup(GROUP_COMMON);
+    enabled = m_settings->value(COMMON_RAW_INPUT_DAEMON_ENABLED_KEY, COMMON_RAW_INPUT_DAEMON_ENABLED_DEF).toBool();
+    m_settings->endGroup();
+    return enabled;
 }
 
 QString Config::getLogLevel()

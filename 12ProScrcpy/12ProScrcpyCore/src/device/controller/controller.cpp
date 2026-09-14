@@ -53,6 +53,11 @@ void Controller::setCameraMode(bool cameraMode)
     m_cameraMode = cameraMode;
 }
 
+void Controller::setRawInputDaemonEnabled(bool enabled)
+{
+    m_rawInputDaemonEnabled = enabled;
+}
+
 void Controller::recvDeviceMsg(DeviceMsg *deviceMsg)
 {
     if (!m_receiver) {
@@ -218,6 +223,15 @@ void Controller::resizeDisplay(const QSize &size)
     }
     m_resizeQueued = true;
     QTimer::singleShot(0, this, &Controller::sendPendingResize);
+
+    // Keep the daemon's frame->panel scaling in sync proactively (plan §3:
+    // "add a FRAME command, sent on connect and on every
+    // Controller::resizeDisplay()") - touchDown()/touchMove() also push this
+    // lazily whenever the frameSize they're called with changes, so this is
+    // belt-and-suspenders for the gap between a resize and the next touch.
+    if (m_rawInputDaemonAvailable && m_rawInputDaemonSession && m_rawInputDaemonSession->isRunning()) {
+        m_rawInputDaemonSession->ensureFrameSize(size);
+    }
 }
 
 void Controller::sendPendingResize()
@@ -319,7 +333,43 @@ void Controller::ensureRealTouchSession()
     if (!m_realTouchSession->isRunning()) {
         m_realTouchSession->start(m_serial);
     }
-    ensureRotationPolling();
+    ensureRawInputDaemon();
+    if (!m_rawInputDaemonAvailable) {
+        // Only needed for mapFrameToRawTouch()'s fallback formula - the
+        // daemon polls `dumpsys window` itself when it's the one driving
+        // touch (design doc "Decision"), so skip the redundant PC-side poll
+        // entirely once the daemon path is confirmed up.
+        ensureRotationPolling();
+    }
+}
+
+void Controller::ensureRawInputDaemon()
+{
+    if (m_cameraMode || m_serial.isEmpty() || !m_rawInputDaemonEnabled) {
+        return;
+    }
+    if (m_rawInputDaemonAttempted) {
+        // Tried-once latch (plan open question: "leaning toward
+        // per-connection" - Controller itself is already scoped to one
+        // device connection, so "once per Controller" satisfies that).
+        // Deliberately not retried mid-connection even if it failed: a
+        // flaky half-succeeded daemon retried on every touch event would be
+        // worse than a clean, permanent fallback for this connection.
+        return;
+    }
+    m_rawInputDaemonAttempted = true;
+
+    if (!m_rawInputDaemonSession) {
+        m_rawInputDaemonSession = new RawInputDaemonSession(this);
+        connect(m_rawInputDaemonSession, &RawInputDaemonSession::sessionError, this, [](const QString &message) {
+            qWarning() << "Controller: raw input daemon unavailable, falling back to AdbSendEventSession for touch:" << message;
+        });
+    }
+
+    m_rawInputDaemonAvailable = m_rawInputDaemonSession->start(m_serial);
+    if (m_rawInputDaemonAvailable) {
+        qInfo() << "Controller: raw input daemon connected, touch will use the daemon-backed path";
+    }
 }
 
 void Controller::ensureRotationPolling()
@@ -406,14 +456,17 @@ void Controller::ensureTouchMoveThrottle()
 
 void Controller::flushPendingTouchMoves()
 {
-    if (!m_realTouchSession || !m_realTouchSession->isRunning()) {
-        return;
-    }
     for (auto it = m_pendingTouchMoves.begin(); it != m_pendingTouchMoves.end(); ++it) {
         if (!it.value().valid) {
             continue;
         }
-        m_realTouchSession->touchMove(it.key(), it.value().rawX, it.value().rawY);
+        if (it.value().useDaemon) {
+            if (m_rawInputDaemonAvailable && m_rawInputDaemonSession && m_rawInputDaemonSession->isRunning()) {
+                m_rawInputDaemonSession->touchMove(it.key(), it.value().framePos, it.value().frameSize);
+            }
+        } else if (m_realTouchSession && m_realTouchSession->isRunning()) {
+            m_realTouchSession->touchMove(it.key(), it.value().rawX, it.value().rawY);
+        }
         it.value().valid = false; // consumed - don't resend the same position again next tick
     }
 }
@@ -473,6 +526,32 @@ void Controller::sendRealTouch(int slot, AndroidMotioneventAction action, QPoint
     }
 
     ensureRealTouchSession();
+
+    // Daemon-backed path (plan §2): frame-space coordinates straight onto
+    // the wire, no mapFrameToRawTouch()/rotation-poll dependency at all -
+    // the daemon does frame->panel scaling and rotation itself.
+    if (m_rawInputDaemonAvailable && m_rawInputDaemonSession && m_rawInputDaemonSession->isRunning()) {
+        switch (action) {
+        case AMOTION_EVENT_ACTION_DOWN:
+            m_rawInputDaemonSession->touchDown(slot, slot + 1, framePos, frameSize);
+            break;
+        case AMOTION_EVENT_ACTION_MOVE:
+            ensureTouchMoveThrottle();
+            m_pendingTouchMoves[slot] = { true, true, 0, 0, framePos, frameSize };
+            break;
+        case AMOTION_EVENT_ACTION_UP:
+            m_pendingTouchMoves.remove(slot);
+            m_rawInputDaemonSession->touchUp(slot);
+            break;
+        default:
+            break;
+        }
+        return;
+    }
+
+    // Fallback path (plan §2.2): unchanged raw-panel sendevent behaviour via
+    // AdbSendEventSession, pre-computing panel-space coordinates here since
+    // that's what this path has always required.
     if (!m_realTouchSession || !m_realTouchSession->isRunning()) {
         qWarning() << "Controller::sendRealTouch: sendevent session not running, dropping touch event";
         return;
@@ -488,7 +567,7 @@ void Controller::sendRealTouch(int slot, AndroidMotioneventAction action, QPoint
         break;
     case AMOTION_EVENT_ACTION_MOVE:
         ensureTouchMoveThrottle();
-        m_pendingTouchMoves[slot] = { true, rawX, rawY };
+        m_pendingTouchMoves[slot] = { true, false, rawX, rawY, QPoint(), QSize() };
         break;
     case AMOTION_EVENT_ACTION_UP:
         m_pendingTouchMoves.remove(slot); // drop any move still queued for a slot that's now lifted
@@ -509,10 +588,6 @@ void Controller::sendRealScroll(QPoint framePos, const QSize &frameSize, float h
     }
 
     ensureRealTouchSession();
-    if (!m_realTouchSession || !m_realTouchSession->isRunning()) {
-        qWarning() << "Controller::sendRealScroll: sendevent session not running, dropping scroll event";
-        return;
-    }
     if (frameSize.width() <= 0 || frameSize.height() <= 0) {
         return;
     }
@@ -533,10 +608,28 @@ void Controller::sendRealScroll(QPoint framePos, const QSize &frameSize, float h
     endFramePos.setX(qBound(0.0, endFramePos.x(), static_cast<double>(frameSize.width())));
     endFramePos.setY(qBound(0.0, endFramePos.y(), static_cast<double>(frameSize.height())));
 
+    const int slot = kMouseTouchSlot;
+
+    if (m_rawInputDaemonAvailable && m_rawInputDaemonSession && m_rawInputDaemonSession->isRunning()) {
+        // Frame-space throughout - no mapFrameToRawTouch() needed on this path.
+        m_rawInputDaemonSession->touchDown(slot, slot + 1, framePos, frameSize);
+        for (int i = 1; i <= kSteps; ++i) {
+            const double t = static_cast<double>(i) / kSteps;
+            const QPointF stepPos = QPointF(framePos) + (endFramePos - QPointF(framePos)) * t;
+            m_rawInputDaemonSession->touchMove(slot, stepPos.toPoint(), frameSize);
+        }
+        m_rawInputDaemonSession->touchUp(slot);
+        return;
+    }
+
+    if (!m_realTouchSession || !m_realTouchSession->isRunning()) {
+        qWarning() << "Controller::sendRealScroll: sendevent session not running, dropping scroll event";
+        return;
+    }
+
     const QPoint startRaw = mapFrameToRawTouch(framePos, frameSize);
     const QPoint endRaw = mapFrameToRawTouch(endFramePos.toPoint(), frameSize);
 
-    const int slot = kMouseTouchSlot;
     m_realTouchSession->touchDown(slot, slot + 1, startRaw.x(), startRaw.y());
     for (int i = 1; i <= kSteps; ++i) {
         const double t = static_cast<double>(i) / kSteps;

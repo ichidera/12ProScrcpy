@@ -42,6 +42,15 @@ endif()
 
 message(STATUS "[${PROJECT_NAME}] QSC_CPU_ARCH:${QSC_CPU_ARCH}")
 
+# Raw-input daemon binary (docs/daemon-implementation-plan.md). This is a
+# device-side (aarch64 Android) binary, cross-compiled separately with the
+# NDK - see src/rawinputdaemon/README.md - so it is NOT built by this
+# project. It is optional: RawInputDaemonSession falls back to the existing
+# AdbSendEventSession sendevent path if it's missing (plan §2.2), so the
+# EXISTS guard below means "copy it in if you've built/dropped it in,
+# otherwise don't break the build for everyone else."
+set(RAW_INPUT_DAEMON_BIN "${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/raw_input_daemon/qtscrcpy_raw_input_daemon")
+
 if(NOT DEFINED QSC_DEPLOY_PATH)
     message(FATAL_ERROR "-- [QtScrcpyCore] need QSC_DEPLOY_PATH")
 endif()
@@ -58,8 +67,20 @@ set(QSC_ADB_SOURCES
     src/adb/adbprocessimpl.cpp
     src/adb/adbprocess.cpp
     src/adb/adbsendeventsession.cpp
+    src/adb/rawinputdaemonsession.cpp
 )
 source_group(src/adb FILES ${QSC_ADB_SOURCES})
+
+# rawinputdaemon (on-device daemon source - not compiled into the Qt/PC
+# build, cross-compiled separately for aarch64 Android; listed here only so
+# it shows up in IDE project trees. See src/rawinputdaemon/README.md.)
+set(QSC_RAWINPUTDAEMON_SOURCES
+    src/rawinputdaemon/raw_input_daemon.c
+    src/rawinputdaemon/build_raw_input_daemon.sh
+    src/rawinputdaemon/README.md
+)
+source_group(src/rawinputdaemon FILES ${QSC_RAWINPUTDAEMON_SOURCES})
+set_source_files_properties(${QSC_RAWINPUTDAEMON_SOURCES} PROPERTIES HEADER_FILE_ONLY TRUE)
 
 # common
 set(QSC_COMMON_SOURCES
@@ -74,6 +95,7 @@ set(QSC_INCLUDE_SOURCES
     include/adbprocess.h
     include/IDecoder.h
     include/adbsendeventsession.h
+    include/rawinputdaemonsession.h
 )
 source_group(include FILES ${QSC_INCLUDE_SOURCES})
 
@@ -197,6 +219,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${THIRD_PARTY_PATH}/adb/win/AdbWinUsbApi.dll" "${QSC_DEPLOY_PATH}"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${THIRD_PARTY_PATH}/scrcpy-server" "${QSC_DEPLOY_PATH}"
     )
+    if(EXISTS "${RAW_INPUT_DAEMON_BIN}")
+        add_custom_command(TARGET ${QSC_PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${RAW_INPUT_DAEMON_BIN}" "${QSC_DEPLOY_PATH}"
+        )
+    endif()
 endif()
 
 # MacOS
@@ -239,6 +266,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/scrcpy-server" "${QSC_DEPLOY_PATH}/MacOS"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/adb/mac/adb" "${QSC_DEPLOY_PATH}/MacOS"
     )
+    if(EXISTS "${RAW_INPUT_DAEMON_BIN}")
+        add_custom_command(TARGET ${QSC_PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${RAW_INPUT_DAEMON_BIN}" "${QSC_DEPLOY_PATH}/MacOS"
+        )
+    endif()
 endif()
 
 # Linux
@@ -261,4 +293,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/adb/linux/adb" "${QSC_DEPLOY_PATH}"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/scrcpy-server" "${QSC_DEPLOY_PATH}"
     )
+    if(EXISTS "${RAW_INPUT_DAEMON_BIN}")
+        add_custom_command(TARGET ${QSC_PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${RAW_INPUT_DAEMON_BIN}" "${QSC_DEPLOY_PATH}"
+        )
+    endif()
 endif()

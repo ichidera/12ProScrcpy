@@ -613,6 +613,7 @@ void Dialog::on_startServerBtn_clicked()
     params.serverLocalPath = getServerPath();
     params.serverRemotePath = Config::getInstance().getServerPath();
     params.pushFilePath = Config::getInstance().getPushFilePath();
+    params.rawInputDaemonEnabled = Config::getInstance().getRawInputDaemonEnabled();
     // Game control schemes are no longer picked before connecting - they're
     // authored and hot-applied in-app via the "App control" panel (see
     // GameControlsEditor) once the mirror session is up.

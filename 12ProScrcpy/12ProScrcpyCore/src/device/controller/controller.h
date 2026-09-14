@@ -9,6 +9,7 @@
 #include <QTimer>
 
 #include "adbsendeventsession.h"
+#include "rawinputdaemonsession.h"
 #include "inputconvertbase.h"
 
 class QTcpSocket;
@@ -33,10 +34,20 @@ public:
     void setCameraMode(bool cameraMode);
     void recvDeviceMsg(DeviceMsg *deviceMsg);
 
-    // Real-device touch injection via `adb shell sendevent`, writing directly
-    // into the touchscreen's kernel input node instead of scrcpy's
-    // control-socket MotionEvent protocol. This is the default (and only)
-    // touch/click path now - see docs/real-device-adb-sendevent.md.
+    // Master enable/disable for the persistent raw-input daemon path
+    // (docs/daemon-implementation-plan.md). Must be called before the first
+    // touch event to have effect on the daemon-attempt latch; defaults to
+    // enabled. When disabled, touch always uses the pre-existing
+    // AdbSendEventSession sendevent path, same as before this plan existed.
+    void setRawInputDaemonEnabled(bool enabled);
+
+    // Real-device touch injection. Default path is the persistent raw-input
+    // daemon (docs/daemon-implementation-plan.md, RawInputDaemonSession)
+    // writing directly into the touchscreen's kernel input node via a
+    // long-lived socket - no per-event process spawn. Automatically falls
+    // back to `adb shell sendevent` via AdbSendEventSession (the pre-daemon
+    // default - see docs/real-device-adb-sendevent.md) if the daemon can't
+    // start. Either way this is the only touch/click path now.
     void sendRealTouch(int slot, AndroidMotioneventAction action, QPoint framePos, const QSize &frameSize);
 
     // Scroll wheel, translated into a short synthetic swipe on the same raw
@@ -106,6 +117,15 @@ private:
     void sendPendingResize();
     void ensureRealTouchSession();
 
+    // Persistent raw-input daemon path (docs/daemon-implementation-plan.md).
+    // Touch only in v1 - hardware keys always stay on m_realTouchSession
+    // (AdbSendEventSession), see plan §0. Tried once per Controller
+    // lifetime (i.e. once per device connection); on any startup failure,
+    // touch falls back to the pre-existing AdbSendEventSession raw-panel
+    // path permanently for the rest of this connection - never retried
+    // mid-connection, and never a hard failure (plan §2.2).
+    void ensureRawInputDaemon();
+
     // Android has two landscape rotations (ROTATION_90 and ROTATION_270)
     // that are mirror-image chiralities of each other and need opposite
     // touch pre-rotation formulas in sendRealTouch() - but both produce a
@@ -133,11 +153,21 @@ private:
     // always sending the latest known position per slot at each tick and
     // silently dropping the stale intermediate ones rather than queuing all
     // of them.
+    // Kept for both backends per plan §2.3: the daemon removes the
+    // process-spawn cost that originally motivated this throttle, but
+    // whether a lightweight coalescing pass is still worthwhile as
+    // backpressure protection against a saturated `adb forward` link is
+    // "evaluate after real-world testing, don't remove reflexively" - so it
+    // stays wired up for the daemon path too rather than being torn out
+    // pre-emptively.
     struct PendingTouchMove
     {
         bool valid = false;
-        int rawX = 0;
+        bool useDaemon = false;
+        int rawX = 0;    // AdbSendEventSession path: panel-space
         int rawY = 0;
+        QPoint framePos; // RawInputDaemonSession path: frame-space
+        QSize frameSize;
     };
     void ensureTouchMoveThrottle();
     void flushPendingTouchMoves();
@@ -152,6 +182,15 @@ private:
     bool m_cameraMode = false;
     QString m_serial;
     QPointer<AdbSendEventSession> m_realTouchSession;
+
+    // Daemon-backed touch path - see ensureRawInputDaemon(). Independent of
+    // m_realTouchSession, which stays alive regardless (hardware keys +
+    // fallback touch).
+    QPointer<RawInputDaemonSession> m_rawInputDaemonSession;
+    bool m_rawInputDaemonAttempted = false; // tried-once latch, see ensureRawInputDaemon()
+    bool m_rawInputDaemonAvailable = false; // true only if the daemon is up and usable for touch
+    bool m_rawInputDaemonEnabled = true;    // master toggle, see setRawInputDaemonEnabled()
+
     DeviceRotation m_deviceRotation = DeviceRotation::Unknown;
     QPointer<QTimer> m_rotationPollTimer;
     QMap<int, PendingTouchMove> m_pendingTouchMoves;
