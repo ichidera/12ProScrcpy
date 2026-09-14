@@ -35,12 +35,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <netinet/in.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
-#include <sys/un.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -101,7 +101,7 @@
 #define MAX_SLOTS 10 /* 0..8 game keymap contacts + 9 reserved mouse slot - see Controller::kMouseTouchSlot */
 #define LISTEN_BACKLOG 1
 #define LINE_BUF_SIZE 256
-#define SOCK_NAME "qtscrcpy_raw_input_daemon" /* bound in the abstract namespace - see main() */
+#define DAEMON_PORT 28820  /* must match RawInputDaemonSession::kDaemonPort */
 #define LOG_PATH "/data/local/tmp/qtscrcpy_raw_input_daemon.log"
 #define ROTATION_POLL_INTERVAL_MS 200 /* matches Controller's own poll cadence */
 
@@ -443,28 +443,29 @@ static void handle_line(daemon_state_t *st, char *line, int *quit)
     }
 }
 
-/* ---- Socket setup: Unix domain, abstract namespace ---- */
-/* Abstract-namespace sockets need no filesystem entry (no /data/local/tmp
- * writable-socket-path concerns, no leftover socket file to clean up across
- * daemon restarts) and are exactly what `adb forward tcp:PORT
- * localabstract:NAME` expects on the other end. */
+/* ---- Socket setup: TCP on USB-RNDIS interface ---- */
+/* Binds 0.0.0.0:DAEMON_PORT so the PC can reach us directly over the
+ * USB-RNDIS interface without any `adb forward` hop. SO_REUSEADDR lets
+ * a rapid daemon restart (e.g. on reconnect) re-bind the port immediately
+ * rather than hitting TIME_WAIT. */
 static int create_listen_socket(void)
 {
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
         log_msg("socket() failed: %s", strerror(errno));
         return -1;
     }
 
-    struct sockaddr_un addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    /* Leading NUL byte selects the abstract namespace. */
-    addr.sun_path[0] = '\0';
-    strncpy(addr.sun_path + 1, SOCK_NAME, sizeof(addr.sun_path) - 2);
-    socklen_t addr_len = (socklen_t)(offsetof(struct sockaddr_un, sun_path) + 1 + strlen(SOCK_NAME));
+    int opt = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
-    if (bind(fd, (struct sockaddr *)&addr, addr_len) < 0) {
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family      = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port        = htons(DAEMON_PORT);
+
+    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         log_msg("bind() failed: %s", strerror(errno));
         close(fd);
         return -1;
@@ -639,7 +640,7 @@ int main(void)
         return 1;
     }
 
-    log_msg("listening on abstract socket '%s'", SOCK_NAME);
+    log_msg("listening on TCP port %d (USB-RNDIS)", DAEMON_PORT);
     run_accept_loop(&st, listen_fd);
 
     log_msg("qtscrcpy_raw_input_daemon exiting");
