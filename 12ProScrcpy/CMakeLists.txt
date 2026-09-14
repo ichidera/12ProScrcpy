@@ -347,6 +347,29 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/sndcpy/sndcpy.bat" "${QSC_BIN_OUTPUT_PATH}"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/sndcpy/sndcpy.apk" "${QSC_BIN_OUTPUT_PATH}"
     )
+
+    # Raw input daemon (aarch64 Android binary, cross-compiled separately -
+    # see 12ProScrcpyCore/src/rawinputdaemon/README.md, not built by this
+    # CMake project). Deployed next to the app exe under the exact filename
+    # RawInputDaemonSession::localBinaryPath() looks for by default
+    # (applicationDirPath() + "/qtscrcpy_raw_input_daemon"), same convention
+    # as sndcpy.bat/sndcpy.apk above and adb.exe/scrcpy-server elsewhere -
+    # no QTSCRCPY_RAW_INPUT_DAEMON_PATH env var needed. Renamed on copy since
+    # the cross-compiled artifact is built as "raw_input_daemon".
+    set(QSC_RAW_INPUT_DAEMON_SRC
+        "${CMAKE_CURRENT_SOURCE_DIR}/12ProScrcpyCore/src/rawinputdaemon/raw_input_daemon"
+    )
+    if(EXISTS "${QSC_RAW_INPUT_DAEMON_SRC}")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${QSC_RAW_INPUT_DAEMON_SRC}"
+                "${QSC_BIN_OUTPUT_PATH}/qtscrcpy_raw_input_daemon"
+        )
+    else()
+        message(WARNING "[${PROJECT_NAME}] raw_input_daemon binary not found at ${QSC_RAW_INPUT_DAEMON_SRC} - "
+                         "cross-compile it first (see 12ProScrcpyCore/src/rawinputdaemon), otherwise the "
+                         "raw-input daemon touch path will be unavailable at runtime.")
+    endif()
 endif()
 
 # MacOS

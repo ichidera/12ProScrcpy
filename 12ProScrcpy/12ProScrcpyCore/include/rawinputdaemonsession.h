@@ -28,18 +28,20 @@ public:
     // Pushes the daemon binary, launches it (su-elevated), sets up
     // `adb forward` to its abstract-namespace socket, and connects.
     // Returns false on ANY failure along that chain - push fails, exec
-    // fails, wrong ABI, `adb forward` fails, socket connect fails - so the
-    // caller can fall back to AdbSendEventSession per plan §2.2. Never
-    // throws, never blocks longer than a few seconds (bounded by the
-    // waitFor*() timeouts on each step).
+    // fails, wrong ABI, `adb forward` fails, socket connect fails. Callers
+    // (Controller::sendRealTouch/sendRealScroll) drop the touch event and
+    // log a warning on failure - there is no AdbSendEventSession sendevent
+    // fallback for touch anymore (removed: it silently masked daemon-start
+    // failures, since sendevent never touches this daemon or its on-device
+    // log). Never throws, never blocks longer than a few seconds (bounded
+    // by the waitFor*() timeouts on each step).
     bool start(const QString &serial);
     void stop();
     bool isRunning() const;
 
     // Wire protocol (plan §3). Coordinates are frame-space (mirrored-window
     // pixels) - the daemon does frame->panel scaling and the rotation
-    // transform itself, so Controller does NOT need
-    // mapFrameToRawTouch() on this path at all.
+    // transform itself.
     void touchDown(int slot, int trackId, const QPoint &framePos, const QSize &frameSize);
     void touchMove(int slot, const QPoint &framePos, const QSize &frameSize);
     void touchUp(int slot);

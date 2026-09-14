@@ -1,4 +1,3 @@
-
 #ifndef CONTROLLER_H
 #define CONTROLLER_H
 
@@ -37,24 +36,26 @@ public:
     // Master enable/disable for the persistent raw-input daemon path
     // (docs/daemon-implementation-plan.md). Must be called before the first
     // touch event to have effect on the daemon-attempt latch; defaults to
-    // enabled. When disabled, touch always uses the pre-existing
-    // AdbSendEventSession sendevent path, same as before this plan existed.
+    // enabled. When disabled (or when the daemon fails to start), touch
+    // events are dropped with a warning rather than falling back to
+    // AdbSendEventSession - see sendRealTouch().
     void setRawInputDaemonEnabled(bool enabled);
 
-    // Real-device touch injection. Default path is the persistent raw-input
-    // daemon (docs/daemon-implementation-plan.md, RawInputDaemonSession)
-    // writing directly into the touchscreen's kernel input node via a
-    // long-lived socket - no per-event process spawn. Automatically falls
-    // back to `adb shell sendevent` via AdbSendEventSession (the pre-daemon
-    // default - see docs/real-device-adb-sendevent.md) if the daemon can't
-    // start. Either way this is the only touch/click path now.
+    // Real-device touch injection via the persistent raw-input daemon
+    // (docs/daemon-implementation-plan.md, RawInputDaemonSession) writing
+    // directly into the touchscreen's kernel input node via a long-lived
+    // socket. This is now the ONLY touch path: if the daemon isn't
+    // available (disabled, or ensureRawInputDaemon() failed to start it),
+    // the event is dropped and a qWarning is logged - no more silent
+    // AdbSendEventSession sendevent fallback. That fallback was removed
+    // because it masked daemon-start failures: sendevent never talks to the
+    // daemon binary, so nothing about a failed daemon start ever showed up
+    // in the daemon's own on-device log, making failures invisible.
     void sendRealTouch(int slot, AndroidMotioneventAction action, QPoint framePos, const QSize &frameSize);
 
     // Scroll wheel, translated into a short synthetic swipe on the same raw
-    // touch channel as sendRealTouch() - there's no root-shell equivalent
-    // of a "scroll" input event, so this reuses the verified touch path
-    // instead of any framework fallback, to keep it feeling like a real
-    // finger flick.
+    // touch channel as sendRealTouch(). Same no-fallback behaviour: dropped
+    // with a warning if the daemon isn't available.
     void sendRealScroll(QPoint framePos, const QSize &frameSize, float hScroll, float vScroll);
 
     // Root-elevated `input keyevent` fallback (same su session as touch),
@@ -121,57 +122,25 @@ private:
     // Touch only in v1 - hardware keys always stay on m_realTouchSession
     // (AdbSendEventSession), see plan §0. Tried once per Controller
     // lifetime (i.e. once per device connection); on any startup failure,
-    // touch falls back to the pre-existing AdbSendEventSession raw-panel
-    // path permanently for the rest of this connection - never retried
-    // mid-connection, and never a hard failure (plan §2.2).
+    // touch is simply dropped (with a qWarning) for the rest of this
+    // connection - never retried mid-connection, and no sendevent fallback
+    // (removed - see sendRealTouch()).
     void ensureRawInputDaemon();
 
-    // Android has two landscape rotations (ROTATION_90 and ROTATION_270)
-    // that are mirror-image chiralities of each other and need opposite
-    // touch pre-rotation formulas in sendRealTouch() - but both produce a
-    // frame with width() > height(), so frameSize alone can't tell them
-    // apart. These poll the live value via `dumpsys window`'s
-    // mCurrentRotation so sendRealTouch() knows which formula to apply.
-    enum class DeviceRotation
-    {
-        Rotation0,
-        Rotation90,
-        Rotation180,
-        Rotation270,
-        Unknown
-    };
-    void ensureRotationPolling();
-    void pollDeviceRotation();
-
-    // MOVE-throttling for sendRealTouch(): each raw sendevent call spawns a
-    // new process on-device, and the persistent adb shell executes them
-    // strictly serially. A live drag generates far more mouse-move samples
-    // per second than the device can fork+exec+exit 3 processes per sample,
-    // so without throttling, a backlog piles up in the shell's input queue
-    // and keeps draining (visibly "sliding") well after the finger lifts.
-    // DOWN/UP are dispatched immediately as before - only MOVE is coalesced,
-    // always sending the latest known position per slot at each tick and
-    // silently dropping the stale intermediate ones rather than queuing all
-    // of them.
-    // Kept for both backends per plan §2.3: the daemon removes the
-    // process-spawn cost that originally motivated this throttle, but
-    // whether a lightweight coalescing pass is still worthwhile as
-    // backpressure protection against a saturated `adb forward` link is
-    // "evaluate after real-world testing, don't remove reflexively" - so it
-    // stays wired up for the daemon path too rather than being torn out
-    // pre-emptively.
+    // MOVE-throttling for sendRealTouch(): a live drag generates far more
+    // mouse-move samples per second than the daemon's single-client TCP
+    // socket needs individually flushed. DOWN/UP are dispatched immediately
+    // as before - only MOVE is coalesced, always sending the latest known
+    // position per slot at each tick and silently dropping the stale
+    // intermediate ones rather than queuing all of them.
     struct PendingTouchMove
     {
         bool valid = false;
-        bool useDaemon = false;
-        int rawX = 0;    // AdbSendEventSession path: panel-space
-        int rawY = 0;
-        QPoint framePos; // RawInputDaemonSession path: frame-space
+        QPoint framePos; // frame-space, sent straight to RawInputDaemonSession
         QSize frameSize;
     };
     void ensureTouchMoveThrottle();
     void flushPendingTouchMoves();
-    QPoint mapFrameToRawTouch(const QPoint &framePos, const QSize &frameSize) const;
 
 private:
     QPointer<Receiver> m_receiver;
@@ -181,25 +150,24 @@ private:
     bool m_resizeQueued = false;
     bool m_cameraMode = false;
     QString m_serial;
+    // Hardware-key / `input keyevent` path only now (postPower/postVolumeUp/
+    // postVolumeDown/sendRealKeyEvent) - no longer a touch fallback, see
+    // sendRealTouch()/sendRealScroll().
     QPointer<AdbSendEventSession> m_realTouchSession;
 
-    // Daemon-backed touch path - see ensureRawInputDaemon(). Independent of
-    // m_realTouchSession, which stays alive regardless (hardware keys +
-    // fallback touch).
+    // Daemon-backed touch path - see ensureRawInputDaemon(). This is now the
+    // *only* touch path: sendRealTouch()/sendRealScroll() drop the event and
+    // log a warning if the daemon isn't available, instead of silently
+    // falling back to AdbSendEventSession's sendevent-based touch (removed -
+    // that fallback was masking daemon-start failures, since sendevent never
+    // touches the daemon's own on-device log).
     QPointer<RawInputDaemonSession> m_rawInputDaemonSession;
     bool m_rawInputDaemonAttempted = false; // tried-once latch, see ensureRawInputDaemon()
     bool m_rawInputDaemonAvailable = false; // true only if the daemon is up and usable for touch
     bool m_rawInputDaemonEnabled = true;    // master toggle, see setRawInputDaemonEnabled()
 
-    DeviceRotation m_deviceRotation = DeviceRotation::Unknown;
-    QPointer<QTimer> m_rotationPollTimer;
     QMap<int, PendingTouchMove> m_pendingTouchMoves;
     QPointer<QTimer> m_touchMoveFlushTimer;
-    // Guards against overlapping `dumpsys window` polls piling up if one
-    // call happens to take longer than the poll interval (e.g. a slow/
-    // wireless adb connection) - without this, a slow poll could still be
-    // in flight when the next timer tick fires another one.
-    bool m_rotationPollInFlight = false;
 };
 
 #endif // CONTROLLER_H
