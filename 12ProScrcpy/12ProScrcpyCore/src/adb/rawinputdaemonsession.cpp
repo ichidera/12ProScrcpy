@@ -181,6 +181,14 @@ bool RawInputDaemonSession::start(const QString &serial)
     }
 
     m_socket = new QTcpSocket(this);
+    // Nagle's algorithm batches small writes (our DOWN/MOVE/UP lines are a
+    // handful of bytes each) waiting for more data or an ACK before sending
+    // - on a loopback `adb forward` link that shows up as the cursor
+    // visibly continuing to drift for tens of ms after the physical mouse
+    // has already stopped, since queued-up coalesced writes keep trickling
+    // out after the fact. Disable it before connecting so every write goes
+    // out immediately.
+    m_socket->setSocketOption(QAbstractSocket::LowDelayOption, 1);
     m_socket->connectToHost(QHostAddress::LocalHost, m_localPort);
     if (!m_socket->waitForConnected(kConnectTimeoutMs)) {
         fail(QString("could not connect to forwarded daemon socket on port %1: %2")

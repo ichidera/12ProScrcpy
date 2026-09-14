@@ -369,14 +369,15 @@ void Controller::ensureTouchMoveThrottle()
         return;
     }
     m_touchMoveFlushTimer = new QTimer(this);
-    // ~60Hz cap. Faster than this and the remote adb shell can't fork+exec
-    // `sendevent` processes as fast as Qt delivers mouse-move samples,
-    // building a backlog that keeps draining (visibly "sliding") after the
-    // finger has already lifted. At each tick, only the latest coalesced
-    // position per slot is sent - intermediate samples are dropped, not
-    // queued.
+    // Was 60Hz (16ms), sized for the old AdbSendEventSession path where
+    // every MOVE forked+exec'd a fresh `sendevent` process on-device and a
+    // backlog of those was genuinely expensive. The daemon path is just a
+    // write() onto an already-open socket, so this can run much tighter -
+    // 120Hz here. Coalescing itself (latest-position-wins per tick) is kept
+    // as cheap backpressure protection against a saturated `adb forward`
+    // link, not because the daemon needs the breathing room.
     connect(m_touchMoveFlushTimer, &QTimer::timeout, this, &Controller::flushPendingTouchMoves);
-    m_touchMoveFlushTimer->start(16);
+    m_touchMoveFlushTimer->start(8);
 }
 
 void Controller::flushPendingTouchMoves()
