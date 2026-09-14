@@ -1,102 +1,160 @@
 # 12ProScrcpy
 
-A [QtScrcpy](https://github.com/barry-ran/QtScrcpy) build tailored for **rooted Xiaomi 12 Pro (codename `zeus`)** devices, with fixes and tweaks for screen mirroring on Magisk-rooted, unlocked-bootloader setups where the stock `scrcpy-server` push/exec flow runs into permission and SELinux friction.
+A [QtScrcpy](https://github.com/barry-ran/QtScrcpy) fork rebuilt around
+**root-elevated raw input injection** for rooted Android devices where
+scrcpy's normal control-socket input path hits an `INJECT_EVENTS`
+permission wall — touch, buttons, scroll, and keyboard are driven via a
+persistent `adb shell su` session using `sendevent` directly against real
+kernel input nodes (with a root-elevated `input keyevent` fallback for keys
+without a confirmed hardware node), instead of relying on
+`scrcpy-server`'s unprivileged input-injection path.
 
-> This repo bundles a vendored copy of `QtScrcpy` and `Scrcpy` alongside supporting scripts and docs, rather than relying on stock upstream builds, because the target device needed root-aware handling that upstream doesn't ship with by default.
+`scrcpy-server.jar` is still used for what it's actually needed for —
+video/audio mirroring and device→PC signaling — it's just no longer in the
+touch/key path.
+
+> **New here?** Read [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — it
+> explains *why* the architecture looks this way, which makes the rest of
+> the codebase make sense. Also includes the full build walkthrough below,
+> plus everything else a contributor needs.
 
 ---
 
 ## Why this exists
 
-Stock `scrcpy`/`QtScrcpy` assumes a fairly "clean" ADB environment. On a rooted Xiaomi 12 Pro running MIUI/HyperOS with Magisk, a few things commonly break or need adjusting:
+Stock scrcpy/QtScrcpy sends input over a TCP control socket to
+`scrcpy-server.jar`, which runs on-device as the unprivileged `shell` user
+and injects input through Android's `InputManager`. On some devices/Android
+versions this throws:
 
-- Pushing/executing `scrcpy-server` can be blocked or interfered with depending on SELinux enforcing mode and MIUI's own restrictions.
-- Magisk root needs to be accounted for (root shell vs. adb shell permissions, `su` handling).
-- Device-specific quirks around unlocked bootloader / `orange` boot state and MIUI's ADB behavior.
+```
+ERROR: Injecting input events requires the caller ... to have the
+INJECT_EVENTS permission.
+```
 
-This project's goal is to smooth over those issues so mirroring "just works" on this specific device, rather than being a general-purpose scrcpy replacement.
+...regardless of root, because the server process itself is unprivileged —
+root on the shell doesn't retroactively grant an already-running
+unprivileged process anything. This fork bypasses that path entirely by
+driving input directly, at the root/kernel level, instead.
 
-### Target device
+See [`docs/DEVELOPMENT.md` §4](docs/DEVELOPMENT.md#4-architecture) for the
+full explanation, and
+[`docs/real-device-adb-sendevent.md`](docs/real-device-adb-sendevent.md)
+for the on-device calibration data (touch coordinate ranges, which kernel
+node backs each hardware button) this fork's defaults are tuned against.
+
+### Reference target device
 
 | | |
 |---|---|
-| Model | Xiaomi 12 Pro (`2201122G`) |
-| Codename | `zeus` (region: `zeus_eea`) |
-| Chipset | Qualcomm SM8450 (Snapdragon 8 Gen 1) |
-| Android / MIUI base | Android 13 (SDK 33) |
-| Root | Magisk, unlocked bootloader (`orange` state) |
+| Platform | Qualcomm "Waipio"-class SoC (Snapdragon 8 Gen 1-class) |
+| Touchscreen | FocalTech `fts`, Type B multitouch |
+| Root | Magisk, unlocked bootloader |
 
-*(Other devices may work but are untested — this repo is being developed and validated against the device above specifically.)*
-
-## Root-specific tweaks
-
-- Handling around `scrcpy-server` push/exec that avoids the permission issues a stock push can hit on a Magisk-rooted, SELinux-restricted setup.
-- Adjustments for running server-side commands with root context where a plain `adb shell` invocation isn't sufficient.
-
-*(This section will get more specific as the tweaks are finalized — see `docs/` for details as they're written up.)*
+*(Different devices may work but will very likely need different
+calibration data — see
+[`docs/DEVELOPMENT.md` §6](docs/DEVELOPMENT.md#6-porting-to-a-different-device)
+for how to re-derive it.)*
 
 ## Repo structure
 
 ```
 12ProScrcpy/
-├── QtScrcpy/     # QtScrcpy source/build, with device-specific patches
-├── Scrcpy/       # Vendored scrcpy (server/client) used by QtScrcpy
-├── scripts/      # Setup/build/launch helper scripts (work in progress)
-├── docs/         # Notes, device specs, troubleshooting write-ups
-└── .gitignore
+├── 12ProScrcpy/                    # Qt GUI application
+│   └── 12ProScrcpyCore/             # Core device-communication library
+│       ├── src/adb/                 # AdbSendEventSession - the root-shell sendevent channel
+│       ├── src/device/controller/   # Controller - the real input-dispatch hub
+│       └── src/third_party/         # NOT tracked in git - see docs/DEVELOPMENT.md §2
+├── docs/
+│   ├── DEVELOPMENT.md               # Full build guide + architecture
+│   ├── real-device-adb-sendevent.md # Hardware calibration reference
+│   └── raw-input-daemon-design.md   # Deferred future-work design doc
+├── scripts/                         # Dev helper scripts (project zip export, etc.)
+└── config/
 ```
-
-> **Status:** `scripts/` is still being fleshed out (device setup, build automation, and/or launch presets are all on the table). This section of the README will be filled in once the scripts stabilize.
 
 ## Prerequisites
 
-- A rooted Xiaomi 12 Pro (`zeus`) with Magisk and an unlocked bootloader
-- USB debugging enabled, and the device authorized for ADB
-- ADB installed and on your `PATH`
-- Qt (version TBD) and a working C++ toolchain, if building `QtScrcpy` from source
+- A rooted Android device (see the reference target above; other devices
+  need their own calibration — see `docs/DEVELOPMENT.md` §6)
+- USB debugging enabled and the device authorized for ADB
+- Qt **6.8.0**, MSVC2022 64-bit kit, **plus the Qt Multimedia and Qt SQL
+  modules** (not included in a minimal Qt install by default)
+- Visual Studio 2022/2026 with the C++ desktop workload
+- CMake 3.10+
 
 ## Getting started
 
-```powershell
-git clone https://github.com/ichidera/12ProScrcpy
-cd 12ProScrcpy
+Full details, including how to fetch missing Qt modules without the
+interactive installer and how to avoid a broken-Windows-SDK pitfall, are in
+[`docs/DEVELOPMENT.md` §2](docs/DEVELOPMENT.md#2-build-environment). Short
+version:
+
+```bat
+call "<path-to-VS>\VC\Auxiliary\Build\vcvars64.bat" <known-good-SDK-version>
+cd <repo_root>
 mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
+cmake .. -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="<path-to-Qt>\6.8.0\msvc2022_64"
 cmake --build . --config Release
-``` 
-# build instructions TBD — see QtScrcpy/ for upstream build docs in the meantime
+<path-to-Qt>\6.8.0\msvc2022_64\bin\windeployqt.exe --release <repo_root>\output\x64\Release\12ProScrcpy.exe
 ```
 
-*(Full build/setup steps will be documented here once the build process is finalized.)*
+`third_party/` (FFmpeg, `adb`, `scrcpy-server`) is not in this repository —
+see `docs/DEVELOPMENT.md` §2 for where to get it; without it, the build
+fails with a missing `libavcodec/avcodec.h` error.
 
 ## Usage
 
-*(Fill in once the launch flow is locked down — e.g. any wrapper script, quality/bitrate presets, or connection mode you standardize on.)*
+Connect your rooted device over USB (or configured wireless ADB), launch
+`12ProScrcpy.exe`, and select the device. The in-app game-controls editor
+(touch-mapped on-screen buttons/gestures) is accessed from the toolbar's
+control icon.
 
 ## Troubleshooting
 
-- **`scrcpy-server` fails to push/start:** check SELinux mode and Magisk root grant for your shell/ADB session.
-- **Device not detected:** confirm ADB authorization and that USB/wireless debugging is enabled.
+- **`INJECT_EVENTS` error in logs:** this is the exact problem this fork
+  exists to route around — if you're seeing it, something is still on the
+  old control-socket path. See `docs/DEVELOPMENT.md` §4.
+- **Touch registers but nothing happens (esp. Home/Back/Menu):** some
+  hardware buttons' kernel-level capability doesn't mean the OS will
+  actually act on a raw injected event for it — see the Home/Back/Menu
+  case study in `docs/DEVELOPMENT.md` §4.
+- **Device not detected:** confirm ADB authorization and USB/wireless
+  debugging is enabled.
+- **Build fails on a fresh checkout:** almost always either the missing Qt
+  modules, a bad Windows SDK pin, or missing `third_party/` — see
+  `docs/DEVELOPMENT.md` §2, which documents all three with the exact fixes.
 
-*(Expand this section as real issues come up during development.)*
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) and
+[`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md). This project follows the
+[Contributor Covenant](CODE_OF_CONDUCT.md).
 
 ## Disclaimer
 
-This project targets a rooted device with an unlocked bootloader. Rooting and unlocking your bootloader can void your warranty and carries risk of bricking your device — proceed at your own risk, and only on hardware you understand the implications for.
+This project targets rooted devices with an unlocked bootloader. Rooting
+and unlocking your bootloader can void your warranty and carries risk of
+bricking your device — proceed at your own risk, and only on hardware you
+understand the implications for. `AdbSendEventSession` sets SELinux to
+permissive mode for the session (`setenforce 0`) as a documented, deliberate
+trade-off required for raw input injection to function — see
+`docs/real-device-adb-sendevent.md` §2 for what that does and doesn't
+affect.
 
 ## Licence
-Since it is based on Qtscrcpy which is scrcpy, it uses the same license as scrcpy
+
+Since it is based on QtScrcpy, which is based on scrcpy, it uses the same
+license as scrcpy:
 
     Copyright (C) 2025 Rankun
-    
+
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
     You may obtain a copy of the License at
-    
+
         http://www.apache.org/licenses/LICENSE-2.0
-    
+
     Unless required by applicable law or agreed to in writing, software
     distributed under the License is distributed on an "AS IS" BASIS,
     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-    See the License for the specific language governing permissions and
-    limitations under the License.
