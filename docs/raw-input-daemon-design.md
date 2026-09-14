@@ -4,10 +4,13 @@
 work (panel positioning, remaining input audits, etc.) is done. Not started.
 
 **Baseline reference:** `uinput_daemon.c` (BlueStacks 5 prototype, attached
-separately) — persistent process, single Unix-domain socket, newline-delimited
-text protocol, one open device fd for the life of the process, no per-event
-process spawn. The design below adapts that same shape to the real phone's
-actual hardware input nodes instead of a self-created virtual uinput device.
+separately) — persistent process, newline-delimited text protocol, one open
+device fd for the life of the process, no per-event process spawn. The design
+below adapts that same shape to the real phone's actual hardware input nodes
+instead of a self-created virtual uinput device. Transport differs: BlueStacks
+used a Unix-domain socket + `adb forward`; this design uses a plain TCP socket
+over USB-RNDIS, which removes the ADB server process hop from the hot path
+entirely (see "Transport" section below).
 
 ---
 
@@ -148,22 +151,24 @@ one less thing the two sides need to agree on.
 
 ---
 
-## Transport: two tiers
+## Transport: direct TCP over USB-RNDIS
 
-**Tier 1 (default, ship first):** Unix domain socket + `adb forward`, same
-pattern as the BlueStacks daemon. `adb forward` is a persistent tunnel once
-set up — no process-spawn cost in steady state — so this alone should
-already be a large improvement over the current per-event `sendevent`
-spawning, independent of anything below.
+The daemon binds a plain TCP socket. The PC connects directly to the phone's
+USB-RNDIS interface IP (typically `192.168.42.129` or whatever the RNDIS
+adapter assigns) — no `adb forward`, no ADB server process in the path at
+all. Every packet goes USB wire → kernel TCP stack → daemon, with nothing
+else touching it.
 
-**Tier 2 (the "next lever," only if Tier 1 still isn't seamless enough):**
-have the daemon bind a **real TCP socket** instead of (or in addition to) the
-Unix socket. If the phone and PC are on the same Wi-Fi network, the PC can
-connect directly to the phone's LAN IP and skip the ADB transport's protocol
-framing entirely for the hot path. USB + `adb forward` remains as the
-fallback transport when Wi-Fi isn't available/desired. This is strictly an
-upgrade path on top of Tier 1 — same daemon, same protocol, just a second
-listening socket.
+This is the single biggest remaining structural latency win and is exactly
+what root + unlocked bootloader access enables: `adb forward` would have
+added a full extra process hop (the PC-side ADB server) on every packet in
+steady state. USB-RNDIS removes that hop entirely. The RNDIS interface is
+available whenever USB debugging is active on a rooted device, requiring no
+additional setup beyond what the app already depends on.
+
+`adb` is still used for the one-time push (`adb push`) and launch
+(`adb shell su -c`) of the daemon binary at session start. It is not in
+the hot path after that.
 
 ---
 
@@ -193,8 +198,8 @@ listening socket.
 
 ## Non-goals for this doc
 
-- Not attempting Tier 2 (direct TCP/Wi-Fi) before Tier 1 (daemon + forward)
-  is proven working and is itself not enough.
+- Not adding Wi-Fi / LAN transport variants — USB-RNDIS is the transport;
+  other network paths are out of scope for this doc.
 - Not touching keyboard-modifier (Shift/Ctrl/Alt) injection here — that's a
   separate, harder problem (real evdev keyboard node vs. `input keyevent`'s
   bare-keycode limitation) noted elsewhere, out of scope for this doc.

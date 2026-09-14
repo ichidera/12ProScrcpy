@@ -31,10 +31,9 @@ this doc is the *how* and *in what order*.
   low-frequency, discrete, already working, and not latency-sensitive the
   way continuous touch is. Migrating them is a cheap follow-up once the
   daemon is proven in production, not a v1 requirement.
-- **Explicit non-goal for v1:** Tier 2 transport (direct LAN TCP). Ship
-  Tier 1 (daemon + `adb forward`) first; only revisit Tier 2 if Tier 1
-  still isn't enough once it's actually running in the app, not based on
-  speculation.
+- **Transport:** direct TCP over USB-RNDIS — the daemon binds a plain TCP
+  socket; the PC connects to the phone's RNDIS interface IP. No `adb forward`
+  in the hot path (see `docs/raw-input-daemon-design.md` §Transport).
 
 ---
 
@@ -86,8 +85,9 @@ directly to an already-open device fd per event.
 3. Add the rotation-poll (`popen("dumpsys window")`-style or a persistent
    sub-shell, ported from `Controller::pollDeviceRotation()`'s command)
    and the coordinate transform.
-4. Replace the interactive `stdin` command loop with a Unix domain socket
-   `accept()`/read loop (BlueStacks daemon's structure).
+4. Replace the interactive `stdin` command loop with a TCP socket
+   `bind()`/`accept()`/read loop — binding on `0.0.0.0` at a fixed port so
+   the PC can reach it over the RNDIS interface directly (no `adb forward`).
 5. Wire the daemon into the app's session lifecycle: pushed once via
    `adb push` to `/data/local/tmp/` at connection start (alongside the
    existing `adb.exe`/`scrcpy-server` push, same `third_party/`-adjacent
@@ -102,16 +102,18 @@ directly to an already-open device fd per event.
 Parallel to `AdbSendEventSession`, not a replacement of it (v1 keeps both
 alive — see §2.2). Owns:
 
-- Pushing/launching the daemon binary
-- `adb forward`-ing a local TCP port to the daemon's Unix socket
-- A persistent `QTcpSocket` (or equivalent) connection to the forwarded port
+- Pushing/launching the daemon binary (via `adb push` + `adb shell su -c`)
+- Resolving the phone's USB-RNDIS interface IP (queried once at session start)
+- A persistent `QTcpSocket` (or equivalent) direct TCP connection to the
+  daemon's bound port over the RNDIS interface — no `adb forward` in the path
 - Writing wire-protocol lines for `DOWN`/`MOVE`/`UP`
 
 ### 2.2 Fallback behavior — non-negotiable for v1
 
 If the daemon fails to start for *any* reason (push fails, exec fails,
-wrong ABI on unexpected hardware, `adb forward` fails), `Controller` must
-transparently fall back to the existing `AdbSendEventSession` touch path.
+wrong ABI on unexpected hardware, RNDIS interface unavailable or connection
+refused), `Controller` must transparently fall back to the existing
+`AdbSendEventSession` touch path.
 **Never a hard failure, never a regression against what works today.**
 Concretely: `Controller::ensureRealTouchSession()` tries
 `RawInputDaemonSession` first, and on any startup failure, falls back to
@@ -130,7 +132,7 @@ close to a no-op change to `Controller`'s public surface —
   after real-world testing**, don't remove reflexively. The daemon removes
   the process-spawn cost that motivated the throttle, but keeping a
   lightweight coalescing pass may still be worthwhile as backpressure
-  protection against a saturated `adb forward` link — decide with real
+  protection against a saturated RNDIS link — decide with real
   measurements, not assumption, once the daemon is actually wired in.
 
 ---
@@ -165,9 +167,9 @@ UP pointer_id
 Phased, each gate before moving to the next:
 
 1. **Daemon standalone, driven manually** (same style as the swipe test's
-   interactive loop, but talking to the real node + through a forwarded
-   socket instead of stdin) — confirm real-panel injection through this
-   new path works at all, separate from wiring it into the app.
+   interactive loop, but talking to the real node via a direct TCP connection
+   to the RNDIS IP instead of stdin) — confirm real-panel injection through
+   this new path works at all, separate from wiring it into the app.
 2. **`RawInputDaemonSession` behind a feature flag / debug toggle** in the
    app, `AdbSendEventSession` still the default — lets touch be tested
    through the new path without it being live for normal use yet.
@@ -197,7 +199,6 @@ data migration, no destructive change, low-risk to ship incrementally.
 - Migrating Power/Volume/Home/Back/Menu/AppSwitch/Copy/Cut onto the daemon
   (protocol already has room for it via the multi-fd design in §1.2, but
   no urgency — those paths work fine today).
-- Tier 2 transport (direct LAN TCP, bypassing `adb forward`).
 - Keyboard modifier support (Shift/Ctrl/Alt) — separate, harder problem,
   real evdev keyboard injection, out of scope here same as it was in the
   original design doc.
@@ -209,7 +210,11 @@ data migration, no destructive change, low-risk to ship incrementally.
 - Exact daemon push/launch lifecycle: once per app launch, or once per
   device connection (re-push on reconnect)? Leaning toward per-connection,
   matching how `AdbSendEventSession` already re-establishes its session.
-- `adb forward` port allocation: fixed port vs. dynamically chosen
-  (`adb forward tcp:0 ...` and read back the assigned port) — dynamic is
-  safer against port collisions if the app is ever run twice / multiple
-  devices connected simultaneously.
+- Daemon TCP port: fixed well-known port vs. configurable. Fixed is simpler
+  (no round-trip to read back an assigned port); a config-file override
+  handles the collision case if the app is run twice or multiple devices are
+  connected simultaneously.
+- RNDIS IP resolution: probe via `ip -o addr show rndis0` (or equivalent
+  interface name on Windows host — `ipconfig` + filter by adapter name) once
+  at session start, or derive from the ADB device's known RNDIS subnet.
+  Needs a concrete lookup path before coding `RawInputDaemonSession::connect()`.

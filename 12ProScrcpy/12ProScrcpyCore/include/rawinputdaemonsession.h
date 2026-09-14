@@ -25,16 +25,16 @@ public:
     explicit RawInputDaemonSession(QObject *parent = nullptr);
     virtual ~RawInputDaemonSession();
 
-    // Pushes the daemon binary, launches it (su-elevated), sets up
-    // `adb forward` to its abstract-namespace socket, and connects.
+    // Pushes the daemon binary, launches it (su-elevated), resolves the
+    // phone's USB-RNDIS interface IP, and connects directly over TCP.
     // Returns false on ANY failure along that chain - push fails, exec
-    // fails, wrong ABI, `adb forward` fails, socket connect fails. Callers
-    // (Controller::sendRealTouch/sendRealScroll) drop the touch event and
-    // log a warning on failure - there is no AdbSendEventSession sendevent
-    // fallback for touch anymore (removed: it silently masked daemon-start
-    // failures, since sendevent never touches this daemon or its on-device
-    // log). Never throws, never blocks longer than a few seconds (bounded
-    // by the waitFor*() timeouts on each step).
+    // fails, wrong ABI, RNDIS interface not found, socket connect fails.
+    // Callers (Controller::sendRealTouch/sendRealScroll) drop the touch
+    // event and log a warning on failure - there is no AdbSendEventSession
+    // sendevent fallback for touch anymore (removed: it silently masked
+    // daemon-start failures, since sendevent never touches this daemon or
+    // its on-device log). Never throws, never blocks longer than a few
+    // seconds (bounded by the waitFor*() timeouts on each step).
     bool start(const QString &serial);
     void stop();
     bool isRunning() const;
@@ -66,7 +66,10 @@ public:
     static const QString &localBinaryPath();
 
     static constexpr const char *kRemoteBinaryPath = "/data/local/tmp/qtscrcpy_raw_input_daemon";
-    static constexpr const char *kAbstractSocketName = "qtscrcpy_raw_input_daemon";
+    // Fixed port the daemon binds on the device side. The PC connects
+    // directly to this port on the phone's USB-RNDIS interface IP -
+    // no `adb forward` in the path.
+    static constexpr quint16 kDaemonPort = 28820;
 
 signals:
     void sessionStarted();
@@ -80,13 +83,16 @@ signals:
 private:
     bool pushDaemon(const QString &serial);
     bool launchDaemon(const QString &serial);
-    bool setupForward(const QString &serial);
-    void teardownForward();
+    // Queries the phone's USB-RNDIS interface IP via `adb shell ip -o addr
+    // show rndis0` (falls back to trying usb0 if rndis0 is absent). Writes
+    // the result into m_rndisAddress. Returns false if neither interface is
+    // found or the output can't be parsed.
+    bool resolveRndisAddress(const QString &serial);
     void writeLine(const QString &line);
     void fail(const QString &message);
 
     QString m_serial;
-    quint16 m_localPort = 0;
+    QString m_rndisAddress;  // phone-side RNDIS IP, resolved in start()
     QPointer<QTcpSocket> m_socket;
     bool m_started = false;
     QSize m_lastSentFrameSize;

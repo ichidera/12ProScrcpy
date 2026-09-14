@@ -6,6 +6,7 @@
 #include <QFileInfo>
 #include <QHostAddress>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QTcpSocket>
 
 namespace {
@@ -15,7 +16,7 @@ namespace {
 // fall back" per plan §2.2, not "wait forever".
 constexpr int kPushTimeoutMs = 5000;
 constexpr int kLaunchTimeoutMs = 3000;
-constexpr int kForwardTimeoutMs = 3000;
+constexpr int kRndisResolveTimeoutMs = 3000;
 constexpr int kConnectTimeoutMs = 2000;
 } // namespace
 
@@ -113,53 +114,43 @@ bool RawInputDaemonSession::launchDaemon(const QString &serial)
     return true;
 }
 
-bool RawInputDaemonSession::setupForward(const QString &serial)
+bool RawInputDaemonSession::resolveRndisAddress(const QString &serial)
 {
-    // Dynamic port (`tcp:0`) rather than a fixed one - per the plan's open
-    // questions, this is safer against port collisions if the app is ever
-    // run twice / multiple devices are connected simultaneously. `adb`
-    // prints the assigned port number on stdout.
-    QProcess forward;
-    QStringList args;
-    if (!serial.isEmpty()) {
-        args << "-s" << serial;
+    // Ask the device for its USB-RNDIS interface IP directly.
+    // `ip -o addr show rndis0` prints lines like:
+    //   2: rndis0    inet 192.168.42.129/24 ...
+    // We try rndis0 first (most Qualcomm/Android RNDIS), then usb0
+    // (some Samsung/MediaTek variants use that name instead).
+    static const QStringList kCandidates = {"rndis0", "usb0"};
+    for (const QString &iface : kCandidates) {
+        QProcess probe;
+        QStringList args;
+        if (!serial.isEmpty()) {
+            args << "-s" << serial;
+        }
+        args << "shell" << "ip" << "-o" << "addr" << "show" << iface;
+        probe.start(AdbProcessImpl::getAdbPath(), args);
+        if (!probe.waitForFinished(kRndisResolveTimeoutMs)) {
+            probe.kill();
+            continue;
+        }
+        const QString out = QString::fromUtf8(probe.readAllStandardOutput());
+        // Parse the first "inet A.B.C.D/prefix" token from the output.
+        const QStringList tokens = out.split(QRegularExpression("\\s+"));
+        for (int i = 0; i < tokens.size() - 1; ++i) {
+            if (tokens[i] == "inet") {
+                const QString cidr = tokens[i + 1]; // e.g. "192.168.42.129/24"
+                const QString addr = cidr.section('/', 0, 0);
+                if (!addr.isEmpty() && addr != "127.0.0.1") {
+                    m_rndisAddress = addr;
+                    return true;
+                }
+            }
+        }
     }
-    args << "forward" << "tcp:0" << QString("localabstract:%1").arg(kAbstractSocketName);
-    forward.start(AdbProcessImpl::getAdbPath(), args);
-    if (!forward.waitForFinished(kForwardTimeoutMs)) {
-        fail("adb forward timed out");
-        return false;
-    }
-    if (forward.exitStatus() != QProcess::NormalExit || forward.exitCode() != 0) {
-        fail(QString("adb forward failed: %1").arg(QString::fromUtf8(forward.readAllStandardError())));
-        return false;
-    }
-
-    bool ok = false;
-    const QString out = QString::fromUtf8(forward.readAllStandardOutput()).trimmed();
-    const quint16 port = out.toUShort(&ok);
-    if (!ok || port == 0) {
-        fail(QString("could not parse forwarded port from adb output: '%1'").arg(out));
-        return false;
-    }
-    m_localPort = port;
-    return true;
-}
-
-void RawInputDaemonSession::teardownForward()
-{
-    if (m_localPort == 0) {
-        return;
-    }
-    QProcess remove;
-    QStringList args;
-    if (!m_serial.isEmpty()) {
-        args << "-s" << m_serial;
-    }
-    args << "forward" << "--remove" << QString("tcp:%1").arg(m_localPort);
-    remove.start(AdbProcessImpl::getAdbPath(), args);
-    remove.waitForFinished(kForwardTimeoutMs);
-    m_localPort = 0;
+    fail("could not resolve USB-RNDIS interface IP (tried rndis0, usb0) - "
+         "is USB tethering / RNDIS active on the device?");
+    return false;
 }
 
 bool RawInputDaemonSession::start(const QString &serial)
@@ -176,30 +167,30 @@ bool RawInputDaemonSession::start(const QString &serial)
     if (!launchDaemon(serial)) {
         return false;
     }
-    if (!setupForward(serial)) {
+    if (!resolveRndisAddress(serial)) {
         return false;
     }
 
     m_socket = new QTcpSocket(this);
     // Nagle's algorithm batches small writes (our DOWN/MOVE/UP lines are a
-    // handful of bytes each) waiting for more data or an ACK before sending
-    // - on a loopback `adb forward` link that shows up as the cursor
-    // visibly continuing to drift for tens of ms after the physical mouse
-    // has already stopped, since queued-up coalesced writes keep trickling
-    // out after the fact. Disable it before connecting so every write goes
-    // out immediately.
+    // handful of bytes each) waiting for more data or an ACK before sending.
+    // Disable it so every write goes out on the wire immediately - we want
+    // each touch event dispatched the instant it's written, not held waiting
+    // for the next ACK or a buffer to fill.
     m_socket->setSocketOption(QAbstractSocket::LowDelayOption, 1);
     connect(m_socket, &QAbstractSocket::bytesWritten, this, [this]() {
         if (m_socket && m_socket->bytesToWrite() == 0) {
             emit writesFlushed();
         }
     });
-    m_socket->connectToHost(QHostAddress::LocalHost, m_localPort);
+    // Connect directly to the phone's USB-RNDIS IP. No adb forward - no
+    // ADB server process in this path at all after launch.
+    m_socket->connectToHost(m_rndisAddress, kDaemonPort);
     if (!m_socket->waitForConnected(kConnectTimeoutMs)) {
-        fail(QString("could not connect to forwarded daemon socket on port %1: %2")
-                 .arg(m_localPort)
+        fail(QString("could not connect to daemon at %1:%2 over RNDIS: %3")
+                 .arg(m_rndisAddress)
+                 .arg(kDaemonPort)
                  .arg(m_socket->errorString()));
-        teardownForward();
         delete m_socket;
         m_socket = nullptr;
         return false;
@@ -223,7 +214,7 @@ void RawInputDaemonSession::stop()
         m_socket->deleteLater();
         m_socket = nullptr;
     }
-    teardownForward();
+    m_rndisAddress.clear();
     m_started = false;
 }
 
