@@ -111,13 +111,40 @@ primitives, same as BlueStacks's version.)
 
 ### ROTATION_90 / ROTATION_270 handling
 
+**Resolved by experiment (see below): rotation compensation is NOT free,
+even via a synthetic device — the daemon must own it.**
+
 Coordinate pre-rotation for landscape frames currently lives in
-`Controller::mapFrameToRawTouch()` on the PC side (C++). Decide whether
-that stays on the PC side (daemon receives already-rotated raw panel
-coordinates, protocol unchanged) or moves into the daemon — probably
-**keep it on the PC side**, since the daemon shouldn't need to know about
-frame size / mirrored-window layout at all; it should stay a dumb,
-fast primitive executor.
+`Controller::mapFrameToRawTouch()` on the PC side (C++). A speculative
+idea was tested before committing to that split further: register a
+*virtual* `uinput` touchscreen (same `INPUT_PROP_DIRECT` property real
+touch drivers use) instead of injecting into the real panel's node, on the
+theory that Android's `TouchInputMapper` might apply its normal automatic
+rotation compensation to any `INPUT_PROP_DIRECT` device, synthetic or not,
+making the whole ROTATION_90/270 disambiguation problem evaporate.
+
+**Tested and refuted.** Sending the identical raw coordinate through a
+registered `INPUT_PROP_DIRECT` virtual device at each of the three
+rotations produced the same uncompensated, glass-fixed behavior as the real
+panel already exhibits — confirmed by the ROTATION_90 vs. ROTATION_270
+results being exact mirror images of each other (matching the "180°-apart
+chirality" relationship already documented for the real panel), not an
+identity mapping. A display-unassociated synthetic direct-touchscreen does
+not get automatic compensation without an explicit display-port
+association via a custom `.idc` file — a materially more invasive,
+harder-to-maintain path (writable system-protected location, fragile
+across reboots) than just keeping the rotation transform in our own code,
+for no real payoff over what's already verified and shipped. Not worth
+pursuing further.
+
+**Decision:** move the rotation transform from the PC (`Controller`) into
+the daemon. This was previously left PC-side reasoning that the PC already
+has rotation-poll context for other reasons (UI layout) so the daemon
+wouldn't need to duplicate it — but the daemon can just as easily poll
+`dumpsys window` itself, and doing so lets the wire protocol be pure
+frame-space coordinates (`DOWN pointer_id x y`, etc.), with zero rotation
+awareness needed on the PC side of the wire at all. Simpler protocol,
+one less thing the two sides need to agree on.
 
 ---
 

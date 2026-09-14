@@ -1,9 +1,3 @@
-# Ignore vendored upstream source trees
-QtScrcpy/
-Scrcpy/
-qtscrcpy/
-scrcpy/
-
 # Ignore common local build artifacts
 build/
 /dist/
@@ -20,8 +14,7 @@ userdata.ini
 Info_Mac.plist
 Adbmirror.zip
 
-QtScrcpy/
-keymap/
+lab/
 docs\12ProScrcpy_sendevent_integration_plan.md
 docs\real-device-adb-sendevent.md
 
