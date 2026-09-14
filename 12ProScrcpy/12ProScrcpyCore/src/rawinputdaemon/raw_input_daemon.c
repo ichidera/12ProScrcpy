@@ -30,12 +30,14 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <netinet/in.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -100,10 +102,47 @@
 
 #define MAX_SLOTS 10 /* 0..8 game keymap contacts + 9 reserved mouse slot - see Controller::kMouseTouchSlot */
 #define LISTEN_BACKLOG 1
-#define LINE_BUF_SIZE 256
 #define DAEMON_PORT 28820  /* must match RawInputDaemonSession::kDaemonPort */
 #define LOG_PATH "/data/local/tmp/qtscrcpy_raw_input_daemon.log"
 #define ROTATION_POLL_INTERVAL_MS 200 /* matches Controller's own poll cadence */
+
+/* ---- Binary wire protocol ----
+ * Every packet is exactly PKT_SIZE bytes, big-endian.
+ * Byte 0: command (CMD_*)
+ * Byte 1: slot (0..MAX_SLOTS-1) for touch cmds; pad byte for FRAME/QUIT
+ * Bytes 2-3: int16_t field A  (trackId for DOWN; x for MOVE; width for FRAME)
+ * Bytes 4-5: int16_t field B  (x for DOWN; y for MOVE; height for FRAME)
+ * Bytes 6-7: int16_t field C  (y for DOWN; unused otherwise)
+ *
+ * No text parsing, no sscanf, no newline framing.  A fixed-size read of
+ * PKT_SIZE bytes per packet is all the daemon needs on the hot path.
+ */
+#define PKT_SIZE  8
+#define CMD_DOWN  0x01
+#define CMD_MOVE  0x02
+#define CMD_UP    0x03
+#define CMD_FRAME 0x04
+#define CMD_QUIT  0xFF
+
+/* Read exactly `len` bytes from fd, retrying on EINTR/short reads. */
+static int read_exact(int fd, uint8_t *buf, size_t len)
+{
+    size_t got = 0;
+    while (got < len) {
+        ssize_t n = read(fd, buf + got, len - got);
+        if (n <= 0) {
+            if (n < 0 && errno == EINTR) continue;
+            return -1; /* disconnected or error */
+        }
+        got += (size_t)n;
+    }
+    return 0;
+}
+
+/* Big-endian decode helpers. */
+static inline int16_t pkt_i16(const uint8_t *p) {
+    return (int16_t)(((uint16_t)p[0] << 8) | p[1]);
+}
 
 typedef enum
 {
@@ -406,41 +445,37 @@ static void reset_touch_state(daemon_state_t *st)
     syn(st->touch_fd);
 }
 
-/* ---- Wire protocol parsing (plan §3) ---- */
+/* ---- Wire protocol dispatch (binary, PKT_SIZE bytes per packet) ---- */
 
-static void handle_line(daemon_state_t *st, char *line, int *quit)
+static int handle_packet(daemon_state_t *st, const uint8_t *pkt)
 {
-    /* Trim trailing CR/LF. */
-    size_t len = strlen(line);
-    while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
-        line[--len] = '\0';
-    }
-    if (len == 0) {
-        return;
-    }
+    /* Returns 1 if the client should be disconnected (QUIT), 0 otherwise. */
+    uint8_t  cmd   = pkt[0];
+    uint8_t  slot  = pkt[1];
+    int16_t  a     = pkt_i16(pkt + 2); /* trackId / x / width  */
+    int16_t  b     = pkt_i16(pkt + 4); /* x       / y / height */
+    int16_t  c     = pkt_i16(pkt + 6); /* y (DOWN only)        */
 
-    char cmd[16] = {0};
-    int a = 0, b = 0, c = 0, d = 0;
-
-    if (sscanf(line, "%15s", cmd) != 1) {
-        return;
+    switch (cmd) {
+    case CMD_DOWN:
+        handle_down(st, slot, (int)a, (int)b, (int)c);
+        break;
+    case CMD_MOVE:
+        handle_move(st, slot, (int)a, (int)b);
+        break;
+    case CMD_UP:
+        handle_up(st, slot);
+        break;
+    case CMD_FRAME:
+        handle_frame(st, (int)a, (int)b);
+        break;
+    case CMD_QUIT:
+        return 1;
+    default:
+        log_msg("unrecognized command byte: 0x%02x", cmd);
+        break;
     }
-
-    if (strcmp(cmd, "DOWN") == 0 && sscanf(line, "%*s %d %d %d %d", &a, &b, &c, &d) == 4) {
-        handle_down(st, a, b, c, d);
-    } else if (strcmp(cmd, "MOVE") == 0 && sscanf(line, "%*s %d %d %d", &a, &b, &c) == 3) {
-        handle_move(st, a, b, c);
-    } else if (strcmp(cmd, "UP") == 0 && sscanf(line, "%*s %d", &a) == 1) {
-        handle_up(st, a);
-    } else if (strcmp(cmd, "FRAME") == 0 && sscanf(line, "%*s %d %d", &a, &b) == 2) {
-        handle_frame(st, a, b);
-    } else if (strcmp(cmd, "PING") == 0) {
-        /* no-op keepalive, useful for the PC side's startup handshake */
-    } else if (strcmp(cmd, "QUIT") == 0) {
-        *quit = 1;
-    } else {
-        log_msg("unrecognized command: %s", line);
-    }
+    return 0;
 }
 
 /* ---- Socket setup: TCP on USB-RNDIS interface ---- */
@@ -521,84 +556,53 @@ static void daemonize(void)
     }
 }
 
-/* ---- Accept loop: single current client, select()-based (reusable as-is) ---- */
+/* ---- Accept loop: single current client, binary protocol ---- */
 static void run_accept_loop(daemon_state_t *st, int listen_fd)
 {
-    char linebuf[LINE_BUF_SIZE];
-    size_t linelen = 0;
-
     for (;;) {
         fd_set rfds;
         FD_ZERO(&rfds);
         FD_SET(listen_fd, &rfds);
-        int maxfd = listen_fd;
 
-        int rc = select(maxfd + 1, &rfds, NULL, NULL, NULL);
+        int rc = select(listen_fd + 1, &rfds, NULL, NULL, NULL);
         if (rc < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
+            if (errno == EINTR) continue;
             log_msg("select() (accept) failed: %s", strerror(errno));
             break;
         }
-        if (!FD_ISSET(listen_fd, &rfds)) {
-            continue;
-        }
+        if (!FD_ISSET(listen_fd, &rfds)) continue;
 
         int client_fd = accept(listen_fd, NULL, NULL);
         if (client_fd < 0) {
             log_msg("accept() failed: %s", strerror(errno));
             continue;
         }
+
+        /* Fix 1: disable Nagle on the accepted socket so the kernel delivers
+         * each received binary packet immediately without buffering it
+         * waiting for a delayed ACK. The PC side already sets TCP_NODELAY on
+         * its send socket; this mirrors it on the receive side. */
+        int one = 1;
+        setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+
         log_msg("client connected");
-        linelen = 0;
 
+        /* Fix 2: binary read loop - read exactly PKT_SIZE bytes per packet,
+         * no text parsing, no sscanf, no newline scanning. */
         int quit = 0;
-        for (;;) {
-            fd_set cfds;
-            FD_ZERO(&cfds);
-            FD_SET(client_fd, &cfds);
-            rc = select(client_fd + 1, &cfds, NULL, NULL, NULL);
-            if (rc < 0) {
-                if (errno == EINTR) {
-                    continue;
-                }
-                break;
-            }
-            if (!FD_ISSET(client_fd, &cfds)) {
-                continue;
-            }
-
-            char chunk[LINE_BUF_SIZE];
-            ssize_t n = read(client_fd, chunk, sizeof(chunk));
-            if (n <= 0) {
+        uint8_t pkt[PKT_SIZE];
+        while (!quit) {
+            if (read_exact(client_fd, pkt, PKT_SIZE) < 0) {
                 break; /* client disconnected or error */
             }
-            for (ssize_t i = 0; i < n; ++i) {
-                if (linelen < sizeof(linebuf) - 1) {
-                    linebuf[linelen++] = chunk[i];
-                }
-                if (chunk[i] == '\n') {
-                    linebuf[linelen] = '\0';
-                    handle_line(st, linebuf, &quit);
-                    linelen = 0;
-                    if (quit) {
-                        break;
-                    }
-                }
-            }
-            if (quit) {
-                break;
-            }
+            quit = handle_packet(st, pkt);
         }
 
         close(client_fd);
         reset_touch_state(st);
         log_msg("client disconnected, touch state reset");
 
-        if (quit) {
-            break;
-        }
+        if (quit) break;
     }
 }
 

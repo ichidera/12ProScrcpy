@@ -2,98 +2,98 @@
 
 #include <QObject>
 #include <QPoint>
-#include <QPointer>
 #include <QSize>
 #include <QString>
 
-class QTcpSocket;
-
 // PC-side counterpart to the on-device qtscrcpy_raw_input_daemon
-// (src/rawinputdaemon/raw_input_daemon.c), implementing
-// docs/daemon-implementation-plan.md section 2.
+// (src/rawinputdaemon/raw_input_daemon.c).
 //
-// Parallel to AdbSendEventSession, not a replacement of it - see plan §2.2.
-// Controller tries this first for touch and falls back to
-// AdbSendEventSession's raw-panel sendevent path on any startup failure.
-// Hardware keys (Power/Volume/Home/Back/Menu) stay on AdbSendEventSession
-// unconditionally in v1 - see plan §0 scope.
+// Wire protocol: fixed 8-byte binary packets, big-endian (matches daemon's
+// PKT_SIZE / CMD_* defines exactly):
+//
+//   Byte 0   command  CMD_DOWN=0x01 CMD_MOVE=0x02 CMD_UP=0x03
+//                     CMD_FRAME=0x04 CMD_QUIT=0xFF
+//   Byte 1   slot     touch slot (0..9); pad byte for FRAME/QUIT
+//   Bytes 2-3 int16_t A  trackId (DOWN) / x (MOVE) / width (FRAME)
+//   Bytes 4-5 int16_t B  x (DOWN)       / y (MOVE) / height (FRAME)
+//   Bytes 6-7 int16_t C  y (DOWN)       / unused otherwise
+//
+// Hot-path write: raw BSD ::send() with MSG_DONTWAIT on m_sockfd, bypassing
+// Qt's internal write buffer entirely.  No QString formatting, no UTF-8
+// encode, no QTcpSocket event-loop round-trip on MOVE.
 class RawInputDaemonSession : public QObject
 {
     Q_OBJECT
 
 public:
     explicit RawInputDaemonSession(QObject *parent = nullptr);
-    virtual ~RawInputDaemonSession();
+    ~RawInputDaemonSession() override;
 
     // Pushes the daemon binary, launches it (su-elevated), resolves the
     // phone's USB-RNDIS interface IP, and connects directly over TCP.
-    // Returns false on ANY failure along that chain - push fails, exec
-    // fails, wrong ABI, RNDIS interface not found, socket connect fails.
-    // Callers (Controller::sendRealTouch/sendRealScroll) drop the touch
-    // event and log a warning on failure - there is no AdbSendEventSession
-    // sendevent fallback for touch anymore (removed: it silently masked
-    // daemon-start failures, since sendevent never touches this daemon or
-    // its on-device log). Never throws, never blocks longer than a few
-    // seconds (bounded by the waitFor*() timeouts on each step).
+    // Returns false on ANY failure — push, exec, RNDIS resolve, or connect.
     bool start(const QString &serial);
     void stop();
     bool isRunning() const;
 
-    // Wire protocol (plan §3). Coordinates are frame-space (mirrored-window
-    // pixels) - the daemon does frame->panel scaling and the rotation
-    // transform itself.
+    // Binary wire protocol. Coordinates are frame-space (mirrored-window
+    // pixels) — the daemon owns the frame→panel transform.
     void touchDown(int slot, int trackId, const QPoint &framePos, const QSize &frameSize);
     void touchMove(int slot, const QPoint &framePos, const QSize &frameSize);
     void touchUp(int slot);
 
-    // Explicit push, e.g. from Controller::resizeDisplay() - also called
-    // lazily by touchDown()/touchMove() whenever frameSize changes, so
-    // callers don't strictly need to call this themselves.
+    // Push frame dimensions eagerly (e.g. from resizeDisplay()). Also called
+    // lazily by touchDown/touchMove whenever frameSize changes.
     void ensureFrameSize(const QSize &frameSize);
 
-    // True once we've written a line the OS socket send buffer hasn't
-    // fully accepted yet. Lets Controller dispatch every MOVE the instant
-    // it arrives (no periodic-timer lag) while still coalescing to "latest
-    // position wins" if the link is ever the actual bottleneck, instead of
-    // an arbitrary fixed tick that adds phase lag on every single move
-    // regardless of whether the link needed it.
+    // True when the OS socket send buffer has unacknowledged bytes — lets
+    // Controller coalesce to "latest MOVE wins" without a polling timer.
     bool hasPendingWrites() const;
 
-    // Local path the daemon binary is expected to live at (next to
-    // adb.exe/scrcpy-server, i.e. QCoreApplication::applicationDirPath()),
-    // overridable via the QTSCRCPY_RAW_INPUT_DAEMON_PATH env var - same
-    // pattern Dialog::getServerPath() already uses for scrcpy-server.
     static const QString &localBinaryPath();
 
     static constexpr const char *kRemoteBinaryPath = "/data/local/tmp/qtscrcpy_raw_input_daemon";
-    // Fixed port the daemon binds on the device side. The PC connects
-    // directly to this port on the phone's USB-RNDIS interface IP -
-    // no `adb forward` in the path.
-    static constexpr quint16 kDaemonPort = 28820;
+    static constexpr quint16     kDaemonPort        = 28820;
+
+    // Binary packet command bytes (mirror daemon's CMD_* defines).
+    static constexpr uint8_t kCmdDown  = 0x01;
+    static constexpr uint8_t kCmdMove  = 0x02;
+    static constexpr uint8_t kCmdUp    = 0x03;
+    static constexpr uint8_t kCmdFrame = 0x04;
+    static constexpr uint8_t kCmdQuit  = 0xFF;
+    static constexpr int     kPktSize  = 8;
 
 signals:
     void sessionStarted();
     void sessionError(const QString &message);
-    // Fires once the socket has fully flushed everything handed to it so
-    // far (bytesToWrite() back to 0) - Controller uses this to send any
-    // MOVE that arrived while a previous write was still draining, instead
-    // of polling on a timer.
+    // Fires when the OS send buffer drains fully — Controller uses this to
+    // flush any MOVE that arrived while a previous packet was still in-flight.
     void writesFlushed();
 
 private:
     bool pushDaemon(const QString &serial);
     bool launchDaemon(const QString &serial);
-    // Queries the phone's USB-RNDIS interface IP via `adb shell ip -o addr
-    // show rndis0` (falls back to trying usb0 if rndis0 is absent). Writes
-    // the result into m_rndisAddress. Returns false if neither interface is
-    // found or the output can't be parsed.
+    // Resolves the phone's USB-RNDIS IP via `adb shell ip -o addr show rndis0`
+    // (falls back to usb0). Writes into m_rndisAddress.
     bool resolveRndisAddress(const QString &serial);
-    void writeLine(const QString &line);
+
+    // Fix 3: raw send on the native socket fd — no Qt write buffer, no
+    // event-loop round-trip. MSG_DONTWAIT means it never blocks; if the send
+    // buffer is momentarily full, the MOVE is dropped (same as the old
+    // hasPendingWrites() coalesce path, but without the QTcpSocket overhead).
+    void sendPacket(const uint8_t pkt[kPktSize]);
+
+    // Encode big-endian int16_t into two bytes at dst.
+    static void putI16(uint8_t *dst, int16_t v) {
+        dst[0] = static_cast<uint8_t>((static_cast<uint16_t>(v) >> 8) & 0xFF);
+        dst[1] = static_cast<uint8_t>( static_cast<uint16_t>(v)       & 0xFF);
+    }
+
     void fail(const QString &message);
 
     QString m_serial;
-    QString m_rndisAddress;  // phone-side RNDIS IP, resolved in start()
-    QPointer<QTcpSocket> m_socket;
-    bool m_started = false;
-    QSize m_lastSentFrameSize;
+    QString m_rndisAddress;
+    int     m_sockfd   = -1;   // raw BSD socket fd — owned by us, closed in stop()
+    bool    m_started  = false;
+    QSize   m_lastSentFrameSize;
 };

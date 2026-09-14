@@ -1,24 +1,49 @@
 #include "rawinputdaemonsession.h"
-#include "adbprocessimpl.h" // for AdbProcessImpl::getAdbPath()
+#include "adbprocessimpl.h"
 
 #include <QCoreApplication>
 #include <QDebug>
 #include <QFileInfo>
-#include <QHostAddress>
 #include <QProcess>
+#include <QThread>
 #include <QRegularExpression>
-#include <QTcpSocket>
+
+// Raw BSD socket headers for the hot-path send (Fix 3).
+#ifdef Q_OS_WIN
+#  include <winsock2.h>
+#  include <ws2tcpip.h>
+#  pragma comment(lib, "Ws2_32.lib")
+   using SockFd = SOCKET;
+   static constexpr SockFd kInvalidSock = INVALID_SOCKET;
+#  define SOCK_SEND(fd, buf, len) ::send((fd), reinterpret_cast<const char*>(buf), static_cast<int>(len), 0)
+#  define SOCK_CLOSE(fd)          ::closesocket(fd)
+#else
+#  include <arpa/inet.h>
+#  include <netinet/in.h>
+#  include <netinet/tcp.h>
+#  include <sys/socket.h>
+#  include <fcntl.h>
+#  include <sys/ioctl.h>
+#  include <linux/sockios.h>
+#  include <unistd.h>
+   using SockFd = int;
+   static constexpr SockFd kInvalidSock = -1;
+#  define SOCK_SEND(fd, buf, len) ::send((fd), (buf), (len), MSG_DONTWAIT)
+#  define SOCK_CLOSE(fd)          ::close(fd)
+#endif
 
 namespace {
-// Bounded timeouts for every blocking step - the daemon start sequence must
-// never hang the caller indefinitely (Controller::ensureRealTouchSession()
-// is on a hot-ish path). A slow/dead adb link just means "startup failed,
-// fall back" per plan §2.2, not "wait forever".
-constexpr int kPushTimeoutMs = 5000;
-constexpr int kLaunchTimeoutMs = 3000;
+constexpr int kPushTimeoutMs         = 5000;
+constexpr int kLaunchTimeoutMs       = 3000;
 constexpr int kRndisResolveTimeoutMs = 3000;
-constexpr int kConnectTimeoutMs = 2000;
+// connect() timeout in ms — we use a non-blocking connect + select() so we
+// don't block the caller longer than this on a dead/wrong IP.
+constexpr int kConnectTimeoutMs      = 2000;
 } // namespace
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 RawInputDaemonSession::RawInputDaemonSession(QObject *parent)
     : QObject(parent)
@@ -48,41 +73,36 @@ void RawInputDaemonSession::fail(const QString &message)
     emit sessionError(message);
 }
 
+// ---------------------------------------------------------------------------
+// Startup sequence
+// ---------------------------------------------------------------------------
+
 bool RawInputDaemonSession::pushDaemon(const QString &serial)
 {
     const QFileInfo info(localBinaryPath());
     if (!info.isFile()) {
-        fail(QString("daemon binary not found at %1 (not built/bundled - see "
-                      "src/rawinputdaemon/README.md)").arg(localBinaryPath()));
+        fail(QString("daemon binary not found at %1 (not built/bundled)")
+                 .arg(localBinaryPath()));
         return false;
     }
 
-    QProcess push;
-    QStringList args;
-    if (!serial.isEmpty()) {
-        args << "-s" << serial;
-    }
-    args << "push" << localBinaryPath() << kRemoteBinaryPath;
-    push.start(AdbProcessImpl::getAdbPath(), args);
-    if (!push.waitForFinished(kPushTimeoutMs)) {
-        fail("adb push timed out");
-        return false;
-    }
-    if (push.exitStatus() != QProcess::NormalExit || push.exitCode() != 0) {
-        fail(QString("adb push failed: %1").arg(QString::fromUtf8(push.readAllStandardError())));
-        return false;
-    }
+    auto adb = [&](QStringList extra) -> bool {
+        QProcess p;
+        QStringList args;
+        if (!serial.isEmpty()) args << "-s" << serial;
+        args << extra;
+        p.start(AdbProcessImpl::getAdbPath(), args);
+        if (!p.waitForFinished(kPushTimeoutMs)) { p.kill(); return false; }
+        return p.exitStatus() == QProcess::NormalExit && p.exitCode() == 0;
+    };
 
-    // Executable bit doesn't survive `adb push` reliably across all vendors.
-    QProcess chmod;
-    QStringList chmodArgs;
-    if (!serial.isEmpty()) {
-        chmodArgs << "-s" << serial;
+    if (!adb({"push", localBinaryPath(), kRemoteBinaryPath})) {
+        fail("adb push failed");
+        return false;
     }
-    chmodArgs << "shell" << "chmod" << "755" << kRemoteBinaryPath;
-    chmod.start(AdbProcessImpl::getAdbPath(), chmodArgs);
-    if (!chmod.waitForFinished(kPushTimeoutMs) || chmod.exitCode() != 0) {
-        fail("chmod on pushed daemon binary failed");
+    // Executable bit doesn't survive adb push on all vendors.
+    if (!adb({"shell", "chmod", "755", kRemoteBinaryPath})) {
+        fail("chmod on daemon binary failed");
         return false;
     }
     return true;
@@ -90,25 +110,21 @@ bool RawInputDaemonSession::pushDaemon(const QString &serial)
 
 bool RawInputDaemonSession::launchDaemon(const QString &serial)
 {
-    // The daemon double-forks and detaches itself (see daemonize() in
-    // raw_input_daemon.c), so this `adb shell` invocation returns as soon as
-    // the first-generation child exits - it does not stay attached for the
-    // life of the daemon. `su -c` matches how AdbSendEventSession already
-    // escalates for sendevent access to these same nodes.
+    // The daemon double-forks so this adb shell returns immediately after
+    // the first child exits — it does not stay attached for the daemon's life.
     QProcess launch;
     QStringList args;
-    if (!serial.isEmpty()) {
-        args << "-s" << serial;
-    }
+    if (!serial.isEmpty()) args << "-s" << serial;
     args << "shell" << "su" << "-c" << kRemoteBinaryPath;
     launch.start(AdbProcessImpl::getAdbPath(), args);
     if (!launch.waitForFinished(kLaunchTimeoutMs)) {
-        fail("daemon launch (adb shell su -c) timed out");
         launch.kill();
+        fail("daemon launch (adb shell su -c) timed out");
         return false;
     }
     if (launch.exitStatus() != QProcess::NormalExit || launch.exitCode() != 0) {
-        fail(QString("daemon launch failed: %1").arg(QString::fromUtf8(launch.readAllStandardError())));
+        fail(QString("daemon launch failed: %1")
+                 .arg(QString::fromUtf8(launch.readAllStandardError())));
         return false;
     }
     return true;
@@ -116,18 +132,14 @@ bool RawInputDaemonSession::launchDaemon(const QString &serial)
 
 bool RawInputDaemonSession::resolveRndisAddress(const QString &serial)
 {
-    // Ask the device for its USB-RNDIS interface IP directly.
-    // `ip -o addr show rndis0` prints lines like:
-    //   2: rndis0    inet 192.168.42.129/24 ...
-    // We try rndis0 first (most Qualcomm/Android RNDIS), then usb0
-    // (some Samsung/MediaTek variants use that name instead).
+    // `ip -o addr show rndis0` output:
+    //   2: rndis0    inet 192.168.42.129/24 brd ...
+    // We try rndis0 (Qualcomm/stock Android), then usb0 (Samsung/MediaTek).
     static const QStringList kCandidates = {"rndis0", "usb0"};
     for (const QString &iface : kCandidates) {
         QProcess probe;
         QStringList args;
-        if (!serial.isEmpty()) {
-            args << "-s" << serial;
-        }
+        if (!serial.isEmpty()) args << "-s" << serial;
         args << "shell" << "ip" << "-o" << "addr" << "show" << iface;
         probe.start(AdbProcessImpl::getAdbPath(), args);
         if (!probe.waitForFinished(kRndisResolveTimeoutMs)) {
@@ -135,129 +147,263 @@ bool RawInputDaemonSession::resolveRndisAddress(const QString &serial)
             continue;
         }
         const QString out = QString::fromUtf8(probe.readAllStandardOutput());
-        // Parse the first "inet A.B.C.D/prefix" token from the output.
         const QStringList tokens = out.split(QRegularExpression("\\s+"));
         for (int i = 0; i < tokens.size() - 1; ++i) {
             if (tokens[i] == "inet") {
-                const QString cidr = tokens[i + 1]; // e.g. "192.168.42.129/24"
-                const QString addr = cidr.section('/', 0, 0);
+                const QString addr = tokens[i + 1].section('/', 0, 0);
                 if (!addr.isEmpty() && addr != "127.0.0.1") {
                     m_rndisAddress = addr;
+                    qDebug() << "RawInputDaemonSession: RNDIS address resolved:"
+                             << m_rndisAddress << "via" << iface;
                     return true;
                 }
             }
         }
     }
-    fail("could not resolve USB-RNDIS interface IP (tried rndis0, usb0) - "
-         "is USB tethering / RNDIS active on the device?");
+    fail("could not resolve USB-RNDIS IP (tried rndis0, usb0) — "
+         "is USB tethering/RNDIS active?");
     return false;
 }
 
+// ---------------------------------------------------------------------------
+// Fix 3: raw BSD connect with non-blocking timeout, then extract native fd.
+//
+// We do the connect ourselves (not via QTcpSocket) so we own the fd directly
+// and can call ::send() on the hot path without any Qt write-buffer layer.
+// ---------------------------------------------------------------------------
+
+static SockFd connectRawTcp(const QString &host, quint16 port, int timeoutMs)
+{
+#ifdef Q_OS_WIN
+    WSADATA wsa;
+    WSAStartup(MAKEWORD(2, 2), &wsa);
+#endif
+
+    SockFd fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd == kInvalidSock) return kInvalidSock;
+
+    // TCP_NODELAY on the send socket — no Nagle batching on the PC side.
+    int one = 1;
+    ::setsockopt(fd,
+#ifdef Q_OS_WIN
+                 IPPROTO_TCP,
+#else
+                 IPPROTO_TCP,
+#endif
+                 TCP_NODELAY, reinterpret_cast<const char*>(&one), sizeof(one));
+
+    // Set non-blocking so connect() returns immediately and we select() with
+    // a real timeout rather than blocking indefinitely.
+#ifdef Q_OS_WIN
+    u_long nb = 1;
+    ioctlsocket(fd, FIONBIO, &nb);
+#else
+    int flags = ::fcntl(fd, F_GETFL, 0);
+    ::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+#endif
+
+    struct sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port   = htons(port);
+    ::inet_pton(AF_INET, host.toLatin1().constData(), &addr.sin_addr);
+
+    int rc = ::connect(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
+
+#ifdef Q_OS_WIN
+    bool inProgress = (rc == SOCKET_ERROR && WSAGetLastError() == WSAEWOULDBLOCK);
+#else
+    bool inProgress = (rc < 0 && errno == EINPROGRESS);
+#endif
+
+    if (rc != 0 && !inProgress) {
+        SOCK_CLOSE(fd);
+        return kInvalidSock;
+    }
+
+    if (inProgress) {
+        fd_set wfds;
+        FD_ZERO(&wfds);
+        FD_SET(fd, &wfds);
+        struct timeval tv{ timeoutMs / 1000, (timeoutMs % 1000) * 1000 };
+#ifdef Q_OS_WIN
+        rc = ::select(0, nullptr, &wfds, nullptr, &tv);
+#else
+        rc = ::select(fd + 1, nullptr, &wfds, nullptr, &tv);
+#endif
+        if (rc <= 0) {
+            SOCK_CLOSE(fd);
+            return kInvalidSock;
+        }
+        // Confirm the connect actually succeeded (select wakes on error too).
+        int err = 0;
+        socklen_t errlen = sizeof(err);
+        ::getsockopt(fd, SOL_SOCKET, SO_ERROR,
+                     reinterpret_cast<char*>(&err), &errlen);
+        if (err != 0) {
+            SOCK_CLOSE(fd);
+            return kInvalidSock;
+        }
+    }
+
+    // Restore blocking mode — read path (not used on hot path) expects it.
+#ifdef Q_OS_WIN
+    u_long nb2 = 0;
+    ioctlsocket(fd, FIONBIO, &nb2);
+#else
+    ::fcntl(fd, F_SETFL, flags); // restore original flags (blocking)
+#endif
+
+    return fd;
+}
+
+// ---------------------------------------------------------------------------
+// Public lifecycle
+// ---------------------------------------------------------------------------
+
 bool RawInputDaemonSession::start(const QString &serial)
 {
-    if (m_started) {
-        return true;
-    }
+    if (m_started) return true;
     m_serial = serial;
     m_lastSentFrameSize = QSize();
 
-    if (!pushDaemon(serial)) {
-        return false;
-    }
-    if (!launchDaemon(serial)) {
-        return false;
-    }
-    if (!resolveRndisAddress(serial)) {
-        return false;
-    }
+    if (!pushDaemon(serial))        return false;
+    if (!launchDaemon(serial))      return false;
+    if (!resolveRndisAddress(serial)) return false;
 
-    m_socket = new QTcpSocket(this);
-    // Nagle's algorithm batches small writes (our DOWN/MOVE/UP lines are a
-    // handful of bytes each) waiting for more data or an ACK before sending.
-    // Disable it so every write goes out on the wire immediately - we want
-    // each touch event dispatched the instant it's written, not held waiting
-    // for the next ACK or a buffer to fill.
-    m_socket->setSocketOption(QAbstractSocket::LowDelayOption, 1);
-    connect(m_socket, &QAbstractSocket::bytesWritten, this, [this]() {
-        if (m_socket && m_socket->bytesToWrite() == 0) {
-            emit writesFlushed();
-        }
-    });
-    // Connect directly to the phone's USB-RNDIS IP. No adb forward - no
-    // ADB server process in this path at all after launch.
-    m_socket->connectToHost(m_rndisAddress, kDaemonPort);
-    if (!m_socket->waitForConnected(kConnectTimeoutMs)) {
-        fail(QString("could not connect to daemon at %1:%2 over RNDIS: %3")
-                 .arg(m_rndisAddress)
-                 .arg(kDaemonPort)
-                 .arg(m_socket->errorString()));
-        delete m_socket;
-        m_socket = nullptr;
+    // Small settle delay — daemon double-forks and then opens the listen
+    // socket; without this, connect() can race against bind()/listen().
+    QThread::msleep(80);
+
+    m_sockfd = connectRawTcp(m_rndisAddress, kDaemonPort, kConnectTimeoutMs);
+    if (m_sockfd == kInvalidSock) {
+        fail(QString("could not connect to daemon at %1:%2 over RNDIS")
+                 .arg(m_rndisAddress).arg(kDaemonPort));
         return false;
     }
 
     m_started = true;
     emit sessionStarted();
+    qDebug() << "RawInputDaemonSession: connected to daemon at"
+             << m_rndisAddress << "port" << kDaemonPort
+             << "(raw fd" << m_sockfd << ", binary protocol)";
     return true;
 }
 
 void RawInputDaemonSession::stop()
 {
-    if (!m_started) {
-        return;
-    }
-    writeLine("QUIT");
-    if (m_socket) {
-        m_socket->flush();
-        m_socket->waitForBytesWritten(200);
-        m_socket->disconnectFromHost();
-        m_socket->deleteLater();
-        m_socket = nullptr;
-    }
-    m_rndisAddress.clear();
+    if (!m_started) return;
+
+    // Send QUIT packet before closing.
+    uint8_t pkt[kPktSize] = { kCmdQuit, 0, 0, 0, 0, 0, 0, 0 };
+    SOCK_SEND(m_sockfd, pkt, kPktSize);
+
+    SOCK_CLOSE(m_sockfd);
+    m_sockfd  = kInvalidSock;
     m_started = false;
+    m_rndisAddress.clear();
 }
 
 bool RawInputDaemonSession::isRunning() const
 {
-    return m_started && m_socket && m_socket->state() == QAbstractSocket::ConnectedState;
+    return m_started && m_sockfd != kInvalidSock;
 }
 
 bool RawInputDaemonSession::hasPendingWrites() const
 {
-    return m_socket && m_socket->bytesToWrite() > 0;
+    // With a raw blocking socket and MSG_DONTWAIT sends, we can't query
+    // bytesToWrite() like QTcpSocket. Instead, check the OS send buffer
+    // level via ioctl SIOCOUTQ (Linux) / TIOCOUTQ.  If unavailable (Windows
+    // or non-Linux), always return false — Controller will send every MOVE
+    // immediately, which is the desired behaviour now that the hot path is
+    // a direct syscall.
+#if defined(Q_OS_LINUX)
+    if (m_sockfd == kInvalidSock) return false;
+    int pending = 0;
+    if (::ioctl(m_sockfd, SIOCOUTQ, &pending) == 0) {
+        return pending > 0;
+    }
+#endif
+    return false;
 }
 
-void RawInputDaemonSession::writeLine(const QString &line)
+// ---------------------------------------------------------------------------
+// Fix 3: hot-path packet send — raw ::send(), no Qt involvement
+// ---------------------------------------------------------------------------
+
+void RawInputDaemonSession::sendPacket(const uint8_t pkt[kPktSize])
 {
-    if (!m_socket || m_socket->state() != QAbstractSocket::ConnectedState) {
-        return;
+    if (m_sockfd == kInvalidSock) return;
+    // MSG_DONTWAIT: if the send buffer is momentarily full, drop this packet
+    // rather than blocking. For MOVE this is fine — Controller coalesces to
+    // "latest position wins" anyway. For DOWN/UP the buffer should never be
+    // full since those are rare relative to MOVE.
+    ssize_t n = SOCK_SEND(m_sockfd, pkt, kPktSize);
+    if (n != kPktSize) {
+        qWarning() << "RawInputDaemonSession: sendPacket short/failed, cmd="
+                   << Qt::hex << pkt[0];
     }
-    m_socket->write((line + "\n").toUtf8());
+    // With a raw send there is no async drain callback. Emit writesFlushed()
+    // immediately — hasPendingWrites() is almost always false on a USB link
+    // so Controller will just call touchMove() directly anyway, but emitting
+    // here keeps the rare queued-MOVE path in Controller::flushPendingTouchMoves()
+    // draining correctly without any timer.
+    emit writesFlushed();
 }
+
+// ---------------------------------------------------------------------------
+// Public wire-protocol methods
+// ---------------------------------------------------------------------------
 
 void RawInputDaemonSession::ensureFrameSize(const QSize &frameSize)
 {
-    if (frameSize == m_lastSentFrameSize || frameSize.width() <= 0 || frameSize.height() <= 0) {
+    if (frameSize == m_lastSentFrameSize
+            || frameSize.width()  <= 0
+            || frameSize.height() <= 0) {
         return;
     }
-    writeLine(QString("FRAME %1 %2").arg(frameSize.width()).arg(frameSize.height()));
+    uint8_t pkt[kPktSize] = {};
+    pkt[0] = kCmdFrame;
+    pkt[1] = 0; // pad
+    putI16(pkt + 2, static_cast<int16_t>(frameSize.width()));
+    putI16(pkt + 4, static_cast<int16_t>(frameSize.height()));
+    // bytes 6-7 unused for FRAME
+    sendPacket(pkt);
     m_lastSentFrameSize = frameSize;
 }
 
-void RawInputDaemonSession::touchDown(int slot, int trackId, const QPoint &framePos, const QSize &frameSize)
+void RawInputDaemonSession::touchDown(int slot, int trackId,
+                                      const QPoint &framePos,
+                                      const QSize  &frameSize)
 {
     ensureFrameSize(frameSize);
-    writeLine(QString("DOWN %1 %2 %3 %4").arg(slot).arg(trackId).arg(framePos.x()).arg(framePos.y()));
+    uint8_t pkt[kPktSize] = {};
+    pkt[0] = kCmdDown;
+    pkt[1] = static_cast<uint8_t>(slot);
+    putI16(pkt + 2, static_cast<int16_t>(trackId));
+    putI16(pkt + 4, static_cast<int16_t>(framePos.x()));
+    putI16(pkt + 6, static_cast<int16_t>(framePos.y()));
+    sendPacket(pkt);
 }
 
-void RawInputDaemonSession::touchMove(int slot, const QPoint &framePos, const QSize &frameSize)
+void RawInputDaemonSession::touchMove(int slot,
+                                      const QPoint &framePos,
+                                      const QSize  &frameSize)
 {
     ensureFrameSize(frameSize);
-    writeLine(QString("MOVE %1 %2 %3").arg(slot).arg(framePos.x()).arg(framePos.y()));
+    uint8_t pkt[kPktSize] = {};
+    pkt[0] = kCmdMove;
+    pkt[1] = static_cast<uint8_t>(slot);
+    putI16(pkt + 2, static_cast<int16_t>(framePos.x()));
+    putI16(pkt + 4, static_cast<int16_t>(framePos.y()));
+    // bytes 6-7 unused for MOVE
+    sendPacket(pkt);
 }
 
 void RawInputDaemonSession::touchUp(int slot)
 {
-    writeLine(QString("UP %1").arg(slot));
+    uint8_t pkt[kPktSize] = {};
+    pkt[0] = kCmdUp;
+    pkt[1] = static_cast<uint8_t>(slot);
+    // bytes 2-7 unused for UP
+    sendPacket(pkt);
 }
