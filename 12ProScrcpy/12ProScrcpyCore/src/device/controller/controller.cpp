@@ -360,36 +360,56 @@ void Controller::ensureRawInputDaemon()
     m_rawInputDaemonAvailable = m_rawInputDaemonSession->start(m_serial);
     if (m_rawInputDaemonAvailable) {
         qInfo() << "Controller: raw input daemon connected, touch will use the daemon-backed path";
+        if (!m_touchFlushConnected) {
+            m_touchFlushConnected = true;
+            connect(m_rawInputDaemonSession, &RawInputDaemonSession::writesFlushed, this, &Controller::flushPendingTouchMoves);
+        }
     }
 }
 
-void Controller::ensureTouchMoveThrottle()
+// Called the instant a MOVE arrives (from sendRealTouch()) rather than on a
+// timer - see header comment on PendingTouchMove. If the daemon socket has
+// already fully flushed its previous write, send this one immediately; the
+// mouse is on-screen at its true real-time position with no artificial
+// delay at all, same as a finger. If a previous write is still draining
+// (the actual, measured bottleneck - not a guess), keep only this newest
+// position for the slot and let RawInputDaemonSession::writesFlushed()
+// (wired up above) send it the moment the link is free again.
+void Controller::dispatchOrQueueTouchMove(int slot, const QPoint &framePos, const QSize &frameSize)
 {
-    if (m_touchMoveFlushTimer) {
+    if (!m_rawInputDaemonSession || !m_rawInputDaemonSession->isRunning()) {
         return;
     }
-    m_touchMoveFlushTimer = new QTimer(this);
-    // Was 60Hz (16ms), sized for the old AdbSendEventSession path where
-    // every MOVE forked+exec'd a fresh `sendevent` process on-device and a
-    // backlog of those was genuinely expensive. The daemon path is just a
-    // write() onto an already-open socket, so this can run much tighter -
-    // 120Hz here. Coalescing itself (latest-position-wins per tick) is kept
-    // as cheap backpressure protection against a saturated `adb forward`
-    // link, not because the daemon needs the breathing room.
-    connect(m_touchMoveFlushTimer, &QTimer::timeout, this, &Controller::flushPendingTouchMoves);
-    m_touchMoveFlushTimer->start(8);
+    if (!m_rawInputDaemonSession->hasPendingWrites()) {
+        m_pendingTouchMoves.remove(slot);
+        m_rawInputDaemonSession->touchMove(slot, framePos, frameSize);
+        return;
+    }
+    // Link is momentarily behind (rare on USB/loopback, more plausible over
+    // a slow/wireless adb connection) - overwrite whatever stale position
+    // was queued for this slot rather than appending, so we never send more
+    // than one, always-freshest sample once the link catches up.
+    m_pendingTouchMoves[slot] = { true, framePos, frameSize };
 }
 
 void Controller::flushPendingTouchMoves()
 {
+    if (!m_rawInputDaemonSession || !m_rawInputDaemonSession->isRunning()) {
+        return;
+    }
     for (auto it = m_pendingTouchMoves.begin(); it != m_pendingTouchMoves.end(); ++it) {
         if (!it.value().valid) {
             continue;
         }
-        if (m_rawInputDaemonAvailable && m_rawInputDaemonSession && m_rawInputDaemonSession->isRunning()) {
-            m_rawInputDaemonSession->touchMove(it.key(), it.value().framePos, it.value().frameSize);
-        }
-        it.value().valid = false; // consumed - don't resend the same position again next tick
+        it.value().valid = false; // consumed - don't resend the same position again
+        m_rawInputDaemonSession->touchMove(it.key(), it.value().framePos, it.value().frameSize);
+        // Only one write per flush: if that write itself doesn't finish
+        // synchronously, hasPendingWrites() will be true again and the next
+        // writesFlushed() signal will drain whatever's left. Sending every
+        // queued slot back-to-back here would defeat the "always freshest,
+        // never backlogged" guarantee for a slot whose write is still
+        // pending from this very loop.
+        break;
     }
 }
 
@@ -412,8 +432,7 @@ void Controller::sendRealTouch(int slot, AndroidMotioneventAction action, QPoint
             m_rawInputDaemonSession->touchDown(slot, slot + 1, framePos, frameSize);
             break;
         case AMOTION_EVENT_ACTION_MOVE:
-            ensureTouchMoveThrottle();
-            m_pendingTouchMoves[slot] = { true, framePos, frameSize };
+            dispatchOrQueueTouchMove(slot, framePos, frameSize);
             break;
         case AMOTION_EVENT_ACTION_UP:
             m_pendingTouchMoves.remove(slot);

@@ -51,6 +51,14 @@ public:
     // callers don't strictly need to call this themselves.
     void ensureFrameSize(const QSize &frameSize);
 
+    // True once we've written a line the OS socket send buffer hasn't
+    // fully accepted yet. Lets Controller dispatch every MOVE the instant
+    // it arrives (no periodic-timer lag) while still coalescing to "latest
+    // position wins" if the link is ever the actual bottleneck, instead of
+    // an arbitrary fixed tick that adds phase lag on every single move
+    // regardless of whether the link needed it.
+    bool hasPendingWrites() const;
+
     // Local path the daemon binary is expected to live at (next to
     // adb.exe/scrcpy-server, i.e. QCoreApplication::applicationDirPath()),
     // overridable via the QTSCRCPY_RAW_INPUT_DAEMON_PATH env var - same
@@ -63,6 +71,11 @@ public:
 signals:
     void sessionStarted();
     void sessionError(const QString &message);
+    // Fires once the socket has fully flushed everything handed to it so
+    // far (bytesToWrite() back to 0) - Controller uses this to send any
+    // MOVE that arrived while a previous write was still draining, instead
+    // of polling on a timer.
+    void writesFlushed();
 
 private:
     bool pushDaemon(const QString &serial);

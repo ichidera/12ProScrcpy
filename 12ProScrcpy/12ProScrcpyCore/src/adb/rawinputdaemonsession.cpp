@@ -189,6 +189,11 @@ bool RawInputDaemonSession::start(const QString &serial)
     // out after the fact. Disable it before connecting so every write goes
     // out immediately.
     m_socket->setSocketOption(QAbstractSocket::LowDelayOption, 1);
+    connect(m_socket, &QAbstractSocket::bytesWritten, this, [this]() {
+        if (m_socket && m_socket->bytesToWrite() == 0) {
+            emit writesFlushed();
+        }
+    });
     m_socket->connectToHost(QHostAddress::LocalHost, m_localPort);
     if (!m_socket->waitForConnected(kConnectTimeoutMs)) {
         fail(QString("could not connect to forwarded daemon socket on port %1: %2")
@@ -225,6 +230,11 @@ void RawInputDaemonSession::stop()
 bool RawInputDaemonSession::isRunning() const
 {
     return m_started && m_socket && m_socket->state() == QAbstractSocket::ConnectedState;
+}
+
+bool RawInputDaemonSession::hasPendingWrites() const
+{
+    return m_socket && m_socket->bytesToWrite() > 0;
 }
 
 void RawInputDaemonSession::writeLine(const QString &line)

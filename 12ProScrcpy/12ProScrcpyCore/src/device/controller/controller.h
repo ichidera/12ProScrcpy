@@ -127,19 +127,24 @@ private:
     // (removed - see sendRealTouch()).
     void ensureRawInputDaemon();
 
-    // MOVE-throttling for sendRealTouch(): a live drag generates far more
-    // mouse-move samples per second than the daemon's single-client TCP
-    // socket needs individually flushed. DOWN/UP are dispatched immediately
-    // as before - only MOVE is coalesced, always sending the latest known
-    // position per slot at each tick and silently dropping the stale
-    // intermediate ones rather than queuing all of them.
+    // MOVE dispatch for sendRealTouch(): sent the instant it arrives, not
+    // on a periodic tick - see RawInputDaemonSession::hasPendingWrites()/
+    // writesFlushed(). A fixed-interval timer was tried first but adds a
+    // constant phase lag (up to one tick period) between the real mouse
+    // position and what's on the wire regardless of link speed - invisible
+    // at low mouse speed, clearly visible as "catching up" at high speed,
+    // since the position gap for a given time-lag scales with how fast the
+    // mouse is moving. Real backpressure (the OS socket send buffer still
+    // draining) is a better signal than a guessed interval: only the
+    // latest position per slot is kept if a write is still in flight, and
+    // it's sent the moment the previous one finishes flushing.
     struct PendingTouchMove
     {
         bool valid = false;
-        QPoint framePos; // frame-space, sent straight to RawInputDaemonSession
+        QPoint framePos;
         QSize frameSize;
     };
-    void ensureTouchMoveThrottle();
+    void dispatchOrQueueTouchMove(int slot, const QPoint &framePos, const QSize &frameSize);
     void flushPendingTouchMoves();
 
 private:
@@ -165,9 +170,9 @@ private:
     bool m_rawInputDaemonAttempted = false; // tried-once latch, see ensureRawInputDaemon()
     bool m_rawInputDaemonAvailable = false; // true only if the daemon is up and usable for touch
     bool m_rawInputDaemonEnabled = true;    // master toggle, see setRawInputDaemonEnabled()
+    bool m_touchFlushConnected = false;     // guards connecting to writesFlushed() more than once
 
     QMap<int, PendingTouchMove> m_pendingTouchMoves;
-    QPointer<QTimer> m_touchMoveFlushTimer;
 };
 
 #endif // CONTROLLER_H
