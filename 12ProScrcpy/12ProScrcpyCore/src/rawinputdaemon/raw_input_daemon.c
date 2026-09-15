@@ -46,6 +46,7 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #include <linux/input.h>
 
@@ -172,8 +173,10 @@ typedef struct
      * DOWN/MOVE (see design doc "Rotation transform owned here"). */
     int frame_width;
     int frame_height;
-    device_rotation_t rotation;
-    time_t rotation_last_poll;
+    /* NOTE: rotation itself is no longer per-state - see g_rotation /
+     * rotation_poll_thread() above. Kept off this struct on purpose so
+     * there's no temptation to read/write it outside the mutex-guarded
+     * accessor. */
 } daemon_state_t;
 
 static FILE *g_log = NULL;
@@ -291,18 +294,50 @@ static device_rotation_t poll_device_rotation(void)
     return result;
 }
 
-static void ensure_rotation_fresh(daemon_state_t *st)
+/* BUG FIX (2026-09-15): this used to call poll_device_rotation() - which
+ * does popen("dumpsys window") - directly from map_frame_to_panel(), i.e.
+ * on the same single thread that reads the socket and writes touch events.
+ * Because the "is it stale" check below only has time_t (1-second)
+ * resolution against a 200ms threshold, that re-triggered a fresh dumpsys
+ * subprocess roughly once per wall-clock second during any sustained
+ * drag/swipe, blocking the whole daemon for however long dumpsys took and
+ * producing exactly the "moves fast, pointer struggles to catch up"
+ * stutter reported against the daemon-backed path. Rotation now lives in
+ * g_rotation, written only by rotation_poll_thread() below and read here
+ * under g_rotation_mutex - the hot path (handle_down/handle_move) never
+ * blocks on dumpsys again. */
+static pthread_mutex_t   g_rotation_mutex = PTHREAD_MUTEX_INITIALIZER;
+static device_rotation_t g_rotation       = ROTATION_UNKNOWN;
+
+static device_rotation_t rotation_cached_read(void)
 {
-    time_t now = time(NULL);
-    if (st->rotation != ROTATION_UNKNOWN &&
-        (now - st->rotation_last_poll) * 1000 < ROTATION_POLL_INTERVAL_MS) {
-        return;
+    pthread_mutex_lock(&g_rotation_mutex);
+    device_rotation_t r = g_rotation;
+    pthread_mutex_unlock(&g_rotation_mutex);
+    return r;
+}
+
+/* Background thread: the only thing allowed to call poll_device_rotation()
+ * (i.e. popen/dumpsys) now. Runs on its own thread so a slow dumpsys call
+ * never stalls touch delivery. A physical screen rotation is a slow,
+ * human-timescale event, so polling every ROTATION_POLL_INTERVAL_MS here
+ * (not per-touch-event) is still more than responsive enough. */
+static void *rotation_poll_thread(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        device_rotation_t r = poll_device_rotation();
+        if (r != ROTATION_UNKNOWN) {
+            pthread_mutex_lock(&g_rotation_mutex);
+            g_rotation = r;
+            pthread_mutex_unlock(&g_rotation_mutex);
+        }
+        struct timespec ts;
+        ts.tv_sec  = ROTATION_POLL_INTERVAL_MS / 1000;
+        ts.tv_nsec = (long)(ROTATION_POLL_INTERVAL_MS % 1000) * 1000000L;
+        nanosleep(&ts, NULL);
     }
-    device_rotation_t r = poll_device_rotation();
-    if (r != ROTATION_UNKNOWN) {
-        st->rotation = r;
-    }
-    st->rotation_last_poll = now;
+    return NULL;
 }
 
 /* Point-reflection relationship between ROTATION_90 and ROTATION_270 is
@@ -316,14 +351,14 @@ static void map_frame_to_panel(daemon_state_t *st, int frame_x, int frame_y, int
         return;
     }
 
-    ensure_rotation_fresh(st);
+    device_rotation_t rotation = rotation_cached_read();
 
     double rx, ry;
     int frame_is_landscape = st->frame_width > st->frame_height;
     if (frame_is_landscape) {
         double rx270 = frame_y * (double)TOUCH_X_MAX / st->frame_height;
         double ry270 = TOUCH_Y_MAX - (frame_x * (double)TOUCH_Y_MAX / st->frame_width);
-        if (st->rotation == ROTATION_90) {
+        if (rotation == ROTATION_90) {
             rx = TOUCH_X_MAX - rx270;
             ry = TOUCH_Y_MAX - ry270;
         } else {
@@ -624,8 +659,6 @@ int main(void)
 
     daemon_state_t st;
     memset(&st, 0, sizeof(st));
-    st.rotation = ROTATION_UNKNOWN;
-    st.rotation_last_poll = 0;
 
     st.touch_fd = open_node(TOUCH_DEVICE_PATH);
     st.home_back_menu_fd = open_node(HOME_BACK_MENU_DEVICE_PATH);
@@ -642,6 +675,17 @@ int main(void)
     if (listen_fd < 0) {
         log_msg("fatal: could not create listen socket, exiting");
         return 1;
+    }
+
+    /* BUG FIX (2026-09-15): rotation polling (popen/dumpsys) now happens
+     * exclusively on this background thread, never on the socket-reading
+     * hot path - see rotation_poll_thread()/g_rotation above. Detached:
+     * it runs for the daemon's whole lifetime and never needs joining. */
+    pthread_t rotation_tid;
+    if (pthread_create(&rotation_tid, NULL, rotation_poll_thread, NULL) == 0) {
+        pthread_detach(rotation_tid);
+    } else {
+        log_msg("warning: failed to start rotation_poll_thread, rotation will stay ROTATION_UNKNOWN");
     }
 
     log_msg("listening on TCP port %d (USB-RNDIS)", DAEMON_PORT);

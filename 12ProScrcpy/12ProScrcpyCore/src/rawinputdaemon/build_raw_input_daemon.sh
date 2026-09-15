@@ -64,7 +64,8 @@ mkdir -p "$OUT_DIR"
     -O2 \
     -Wall -Wextra \
     -o "${OUT_DIR}/qtscrcpy_raw_input_daemon" \
-    "${SCRIPT_DIR}/raw_input_daemon.c"
+    "${SCRIPT_DIR}/raw_input_daemon.c" \
+    -lpthread
 
 echo "built: ${OUT_DIR}/qtscrcpy_raw_input_daemon"
 file "${OUT_DIR}/qtscrcpy_raw_input_daemon" 2>/dev/null || true
