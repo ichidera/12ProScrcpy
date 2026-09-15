@@ -1,3 +1,4 @@
+#include <QCheckBox>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
@@ -264,6 +265,21 @@ QWidget *ControlInspectorDialog::buildFieldsForAction()
         m_suspendKeyCapture = new KeyCaptureButton(w);
         m_suspendKeyCapture->setBoundKeyString(m_node.suspendKey);
         form->addRow(tr("Suspend shoot-mode (hold, optional)"), m_suspendKeyCapture);
+
+        if (m_node.action == ControlActionKind::AimPanShoot) {
+            // BlueStacks' "Fire with left click": off by default, the
+            // shoot button just fires at the same anchor pan uses. Once
+            // checked, a second draggable "fire spot" icon appears on the
+            // canvas (see GameControlMarker's FireAnchor role) for placing
+            // over the game's own on-screen fire button - shoot then fires
+            // there instead, independently and simultaneously with pan.
+            m_fireAnchorEnabledCheck = new QCheckBox(tr("Fire with left click at a separate spot"), w);
+            m_fireAnchorEnabledCheck->setChecked(m_node.fireAnchorEnabled);
+            m_fireAnchorEnabledCheck->setToolTip(
+                tr("Adds a second, independently draggable icon - drop it on top of the game's own shoot/fire button. "
+                   "Leave unchecked to keep shooting from the same spot pan uses."));
+            form->addRow(QString(), m_fireAnchorEnabledCheck);
+        }
         break;
     }
     }
@@ -306,6 +322,20 @@ ControlNode ControlInspectorDialog::result() const
         node.lookSpeedY = static_cast<float>(m_lookSpeedYSpin->value());
         node.smallEyesKey = m_smallEyesCapture->boundKeyString();
         node.suspendKey = m_suspendKeyCapture->boundKeyString();
+        if (m_fireAnchorEnabledCheck) {
+            const bool wasEnabled = m_node.fireAnchorEnabled;
+            node.fireAnchorEnabled = m_fireAnchorEnabledCheck->isChecked();
+            if (node.fireAnchorEnabled && !wasEnabled) {
+                // Freshly turned on: seed the new fire spot a bit off from
+                // the pan anchor (same spot as before) rather than exactly
+                // on top of it, so it's immediately visible and draggable
+                // instead of hiding directly under the pan icon.
+                QPointF seeded = node.pos + QPointF(0.12, -0.12);
+                seeded.setX(qBound(0.05, seeded.x(), 0.95));
+                seeded.setY(qBound(0.05, seeded.y(), 0.95));
+                node.fireAnchorPos = seeded;
+            }
+        }
         break;
     }
 

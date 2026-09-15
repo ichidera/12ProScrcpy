@@ -43,6 +43,7 @@ class QSpinBox;
 class QDoubleSpinBox;
 class QLabel;
 class QWidget;
+class QCheckBox;
 
 class ControlInspectorDialog : public QDialog
 {
@@ -76,6 +77,7 @@ private:
     QDoubleSpinBox *m_lookSpeedYSpin = nullptr;             // FreeLook / AimPanShoot
     KeyCaptureButton *m_smallEyesCapture = nullptr;         // FreeLook / AimPanShoot (optional)
     KeyCaptureButton *m_suspendKeyCapture = nullptr;        // FreeLook / AimPanShoot (optional) - hold to pause shoot-mode
+    QCheckBox *m_fireAnchorEnabledCheck = nullptr;          // AimPanShoot only - BlueStacks' "Fire with left click"
 };
 
 #endif // CONTROLINSPECTORDIALOG_H

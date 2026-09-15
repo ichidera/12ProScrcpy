@@ -5,6 +5,7 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
 
 #include "gamecontrolmarker.h"
 
@@ -13,19 +14,88 @@ namespace
 constexpr int kMarkerSize = 40;
 }
 
-GameControlMarker::GameControlMarker(const ControlNode &node, QWidget *parent) : QWidget(parent), m_node(node)
+GameControlMarker::GameControlMarker(const ControlNode &node, QWidget *parent, MarkerRole role, GameControlMarker *owner)
+    : QWidget(parent), m_node(node), m_role(role), m_owner(owner)
 {
     setFixedSize(kMarkerSize, kMarkerSize);
     setCursor(Qt::PointingHandCursor);
-    setToolTip(node.label.isEmpty() ? KeyMapProfileStore::actionLabel(node.action) : node.label);
+    setToolTip(m_role == MarkerRole::FireAnchor ? tr("Fire spot - drag onto the game's own shoot/fire button")
+                                                 : (node.label.isEmpty() ? KeyMapProfileStore::actionLabel(node.action) : node.label));
     setAttribute(Qt::WA_Hover, true);
+    if (m_role == MarkerRole::Primary) {
+        updateFireAnchorChild();
+    }
+}
+
+GameControlMarker::~GameControlMarker()
+{
+    // The fire-anchor child is a sibling widget (parented to the surface,
+    // not to this marker, so it can be freely positioned anywhere on it) -
+    // Qt's own parent/child cleanup won't reach it, so it needs deleting
+    // explicitly here.
+    if (m_fireAnchorChild) {
+        m_fireAnchorChild->deleteLater();
+        m_fireAnchorChild = nullptr;
+    }
 }
 
 void GameControlMarker::setNode(const ControlNode &node)
 {
     m_node = node;
-    setToolTip(node.label.isEmpty() ? KeyMapProfileStore::actionLabel(node.action) : node.label);
+    setToolTip(m_role == MarkerRole::FireAnchor ? tr("Fire spot - drag onto the game's own shoot/fire button")
+                                                 : (node.label.isEmpty() ? KeyMapProfileStore::actionLabel(node.action) : node.label));
+    if (m_role == MarkerRole::Primary) {
+        updateFireAnchorChild();
+    }
     update();
+}
+
+void GameControlMarker::updateFireAnchorChild()
+{
+    const bool want = m_node.action == ControlActionKind::AimPanShoot && m_node.fireAnchorEnabled;
+    if (want && !m_fireAnchorChild) {
+        m_fireAnchorChild = new GameControlMarker(m_node, parentWidget(), MarkerRole::FireAnchor, this);
+        m_fireAnchorChild->setInteractive(m_interactive);
+        m_fireAnchorChild->setDisplayOpacityPercent(m_displayOpacityPercent);
+        m_fireAnchorChild->show();
+        m_fireAnchorChild->raise();
+        if (parentWidget()) {
+            m_fireAnchorChild->relayout(parentWidget()->size());
+        }
+    } else if (!want && m_fireAnchorChild) {
+        m_fireAnchorChild->deleteLater();
+        m_fireAnchorChild = nullptr;
+    } else if (m_fireAnchorChild) {
+        // Keep the child's own copy of the node (bound key shown in its
+        // caption, fireAnchorPos) in sync with whatever just changed on us.
+        m_fireAnchorChild->setNode(m_node);
+    }
+}
+
+void GameControlMarker::syncFireAnchorPos(QPointF normPos)
+{
+    m_node.fireAnchorPos = normPos;
+}
+
+void GameControlMarker::notifyMoved()
+{
+    emit moved(this);
+}
+
+void GameControlMarker::requestEdit()
+{
+    emit editRequested(this);
+}
+
+void GameControlMarker::disableFireAnchor()
+{
+    if (!m_fireAnchorChild) {
+        return;
+    }
+    m_node.fireAnchorEnabled = false;
+    updateFireAnchorChild();
+    update();
+    emit moved(this); // reuse the normal dirty-tracking path
 }
 
 void GameControlMarker::setInteractive(bool interactive)
@@ -36,12 +106,18 @@ void GameControlMarker::setInteractive(bool interactive)
     // clickable.
     setAttribute(Qt::WA_TransparentForMouseEvents, !interactive);
     setCursor(interactive ? Qt::PointingHandCursor : Qt::ArrowCursor);
+    if (m_fireAnchorChild) {
+        m_fireAnchorChild->setInteractive(interactive);
+    }
 }
 
 void GameControlMarker::setDisplayOpacityPercent(int percent)
 {
     m_displayOpacityPercent = qBound(0, percent, 100);
     update();
+    if (m_fireAnchorChild) {
+        m_fireAnchorChild->setDisplayOpacityPercent(percent);
+    }
 }
 
 void GameControlMarker::relayout(const QSize &surfaceSize)
@@ -49,9 +125,13 @@ void GameControlMarker::relayout(const QSize &surfaceSize)
     if (surfaceSize.isEmpty()) {
         return;
     }
-    const int x = qRound(m_node.pos.x() * surfaceSize.width()) - width() / 2;
-    const int y = qRound(m_node.pos.y() * surfaceSize.height()) - height() / 2;
+    const QPointF anchor = m_role == MarkerRole::FireAnchor ? m_node.fireAnchorPos : m_node.pos;
+    const int x = qRound(anchor.x() * surfaceSize.width()) - width() / 2;
+    const int y = qRound(anchor.y() * surfaceSize.height()) - height() / 2;
     move(x, y);
+    if (m_fireAnchorChild) {
+        m_fireAnchorChild->relayout(surfaceSize);
+    }
 }
 
 QString GameControlMarker::shortCaption() const
@@ -80,6 +160,12 @@ QString GameControlMarker::shortCaption() const
         return s.size() > 5 ? s.left(5) : s;
     };
 
+    if (m_role == MarkerRole::FireAnchor) {
+        // Same bound button as the owning AimPanShoot marker (LMB/RMB/...) -
+        // tells you at a glance which click this spot fires on.
+        return shortKeyName(m_node.key);
+    }
+
     switch (m_node.action) {
     case ControlActionKind::TapSpot:
         return shortKeyName(m_node.key);
@@ -101,6 +187,9 @@ QString GameControlMarker::shortCaption() const
 
 QColor GameControlMarker::badgeColor() const
 {
+    if (m_role == MarkerRole::FireAnchor) {
+        return QColor("#f97316"); // orange - visually distinct from the crosshair-red pan anchor it belongs to
+    }
     switch (m_node.action) {
     case ControlActionKind::TapSpot:
         return QColor("#3b82f6");
@@ -143,6 +232,19 @@ void GameControlMarker::paintEvent(QPaintEvent *)
     p.setPen(QPen(Qt::white, 2));
     p.setBrush(Qt::NoBrush);
 
+    if (m_role == MarkerRole::FireAnchor) {
+        // Flame glyph: distinct from the pan anchor's crosshair, reads as
+        // "this is the actual fire button" the way BlueStacks' own fire
+        // icon does. Filled dot at the tip = still a discrete tap/click,
+        // same shorthand TapSpot uses.
+        QPainterPath flame;
+        flame.moveTo(c + QPointF(0, -R));
+        flame.cubicTo(c + QPointF(R * 0.75, -R * 0.2), c + QPointF(R * 0.35, R * 0.35), c + QPointF(0, R));
+        flame.cubicTo(c + QPointF(-R * 0.35, R * 0.35), c + QPointF(-R * 0.75, -R * 0.2), c + QPointF(0, -R));
+        p.drawPath(flame);
+        p.setBrush(Qt::white);
+        p.drawEllipse(c + QPointF(0, R * 0.35), R * 0.18, R * 0.18);
+    } else {
     switch (m_node.action) {
     case ControlActionKind::TapSpot: {
         // single filled dot = single tap
@@ -201,6 +303,7 @@ void GameControlMarker::paintEvent(QPaintEvent *)
         break;
     }
     }
+    }
 
     const QString caption = shortCaption();
     if (!caption.isEmpty()) {
@@ -241,8 +344,19 @@ void GameControlMarker::mouseMoveEvent(QMouseEvent *event)
     move(newPos);
 
     if (surface.width() > 0 && surface.height() > 0) {
-        m_node.pos.setX(qreal(newPos.x() + width() / 2) / surface.width());
-        m_node.pos.setY(qreal(newPos.y() + height() / 2) / surface.height());
+        const QPointF normPos(qreal(newPos.x() + width() / 2) / surface.width(), qreal(newPos.y() + height() / 2) / surface.height());
+        if (m_role == MarkerRole::FireAnchor) {
+            m_node.fireAnchorPos = normPos;
+            if (m_owner) {
+                // Keep the owner's own ControlNode authoritative for this
+                // field, since that's the copy GameControlsEditor actually
+                // reads back (this child isn't in its m_markers list).
+                m_owner->syncFireAnchorPos(normPos);
+            }
+        } else {
+            m_node.pos.setX(normPos.x());
+            m_node.pos.setY(normPos.y());
+        }
     }
 }
 
@@ -251,21 +365,49 @@ void GameControlMarker::mouseReleaseEvent(QMouseEvent *event)
     Q_UNUSED(event)
     if (m_dragging) {
         m_dragging = false;
-        emit moved(this);
+        if (m_role == MarkerRole::FireAnchor) {
+            if (m_owner) {
+                m_owner->notifyMoved();
+            }
+        } else {
+            emit moved(this);
+        }
     }
 }
 
 void GameControlMarker::mouseDoubleClickEvent(QMouseEvent *event)
 {
     Q_UNUSED(event)
-    if (m_interactive) {
-        emit editRequested(this);
+    if (!m_interactive) {
+        return;
     }
+    if (m_role == MarkerRole::FireAnchor) {
+        // Opens the same AimPanShoot properties dialog as double-clicking
+        // the pan icon - there's only one set of settings for the pair.
+        if (m_owner) {
+            m_owner->requestEdit();
+        }
+        return;
+    }
+    emit editRequested(this);
 }
 
 void GameControlMarker::contextMenuEvent(QContextMenuEvent *event)
 {
     if (!m_interactive) {
+        return;
+    }
+    if (m_role == MarkerRole::FireAnchor) {
+        // This child isn't registered with GameControlsEditor's marker
+        // list, so it can't go through the normal removeMarker() flow -
+        // "removing" it just means turning fireAnchorEnabled back off on
+        // the owner, which is what actually deletes this widget.
+        QMenu menu(this);
+        QAction *removeAction = menu.addAction(tr("Remove fire spot"));
+        QAction *chosen = menu.exec(event->globalPos());
+        if (chosen == removeAction && m_owner) {
+            m_owner->disableFireAnchor();
+        }
         return;
     }
     QMenu menu(this);

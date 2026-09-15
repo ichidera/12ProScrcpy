@@ -13,13 +13,44 @@ class GameControlMarker : public QWidget
 {
     Q_OBJECT
 public:
-    explicit GameControlMarker(const ControlNode &node, QWidget *parent = nullptr);
+    enum class MarkerRole
+    {
+        Primary,   // the control's own anchor (node.pos) - every action kind
+        FireAnchor // AimPanShoot's independent "fire with left click" spot
+                   // (node.fireAnchorPos, BlueStacks calls it the "fire
+                   // icon") - only exists as a child of a Primary
+                   // AimPanShoot marker, only while node.fireAnchorEnabled.
+    };
+
+    explicit GameControlMarker(const ControlNode &node, QWidget *parent = nullptr, MarkerRole role = MarkerRole::Primary,
+                                GameControlMarker *owner = nullptr);
+    ~GameControlMarker() override;
 
     const ControlNode &node() const { return m_node; }
     void setNode(const ControlNode &node);
 
-    // Re-place this marker for the given surface size, from its normalized pos().
+    MarkerRole role() const { return m_role; }
+
+    // Re-place this marker for the given surface size, from its normalized
+    // anchor (node.pos, or node.fireAnchorPos for a FireAnchor marker).
+    // Also relayouts the fire-anchor child, if this is a Primary marker
+    // that currently has one.
     void relayout(const QSize &surfaceSize);
+
+    // Both only meaningful on a FireAnchor marker's owner, called by that
+    // child marker itself while/after being dragged - lets the child push
+    // its position straight into the owner's own ControlNode and re-emit
+    // moved() as if the owner had moved, so GameControlsEditor's existing
+    // per-marker dirty-tracking/applyLive() machinery picks up the change
+    // without needing to know this child marker exists at all.
+    void syncFireAnchorPos(QPointF normPos);
+    void notifyMoved();
+    void requestEdit();
+    // Turns fireAnchorEnabled back off and removes the child marker -
+    // reachable from the child's own right-click menu ("Remove fire spot"),
+    // since the child isn't registered with GameControlsEditor and so
+    // can't go through the normal removeMarker() flow.
+    void disableFireAnchor();
 
     // Used by the persistent "On-screen controls" display (see
     // GameControlsPanel): a non-interactive marker just shows where a
@@ -50,6 +81,9 @@ private:
     // already communicates the action type via shape.
     QString shortCaption() const;
     QColor badgeColor() const;
+    // Creates/destroys/updates the FireAnchor child to match
+    // m_node.fireAnchorEnabled. No-op unless this is a Primary marker.
+    void updateFireAnchorChild();
 
 private:
     ControlNode m_node;
@@ -58,6 +92,10 @@ private:
     bool m_dragging = false;
     bool m_interactive = true;
     int m_displayOpacityPercent = 100;
+
+    MarkerRole m_role = MarkerRole::Primary;
+    GameControlMarker *m_owner = nullptr;           // set only when role() == FireAnchor
+    GameControlMarker *m_fireAnchorChild = nullptr; // set only on a Primary AimPanShoot marker, while enabled
 };
 
 #endif // GAMECONTROLMARKER_H

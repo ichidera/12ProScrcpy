@@ -266,6 +266,14 @@ QString KeyMapProfileStore::toJson(const QString &switchKey, const QString &curs
             if (stringToKey(shootKey, nullptr, &isMouse) && isMouse) {
                 root.insert("shootButton", shootKey);
             }
+            // Read back by fromJson() below to positively identify the
+            // KMT_CLICK node this pairs with even when its pos no longer
+            // matches the look anchor (see the fireAnchorEnabled branch in
+            // the keyMapNodes loop just below) - position-matching alone
+            // stops being a reliable signal once the two anchors can differ.
+            if (node.fireAnchorEnabled) {
+                root.insert("fireAnchorEnabled", true);
+            }
         }
         break;
     }
@@ -321,9 +329,17 @@ QString KeyMapProfileStore::toJson(const QString &switchKey, const QString &curs
         }
         case ControlActionKind::AimPanShoot: {
             // The look/pan part became the root-level mouseMoveMap above;
-            // the "shoot" part is a plain tap at the same anchor point.
+            // the "shoot" part is its own plain tap node. Ordinarily (fire
+            // anchor disabled) it sits at the same anchor point pan uses -
+            // one spot doing double duty, matching this control's original
+            // behavior. With the fire anchor enabled (BlueStacks' "Fire
+            // with left click" + placing the fire icon on the game's own
+            // fire button), it fires at fireAnchorPos instead - a second,
+            // independent spot the engine already drives on its own
+            // multitouch slot, simultaneously with pan.
             const QString shootKey = node.key.isEmpty() ? QStringLiteral("LeftButton") : node.key;
-            keyMapNodes.append(clickJson(shootKey, node.pos, false));
+            const QPointF shootPos = node.fireAnchorEnabled ? node.fireAnchorPos : node.pos;
+            keyMapNodes.append(clickJson(shootKey, shootPos, false));
             break;
         }
         case ControlActionKind::FreeLook:
@@ -355,6 +371,14 @@ bool KeyMapProfileStore::fromJson(const QString &json, QString &switchKey, QStri
     // Absent in profiles saved before this field existed - fall back to F1
     // rather than leaving the lock permanently unbound.
     cursorLockKey = root.value("cursorLockKey").toString(defaultCursorLockKeyString());
+
+    // Both read by InputConvertGame::loadKeyMap() at runtime too (see there
+    // for why they live at root level rather than in a node) - reading them
+    // here as well is what lets the AimPanShoot/shoot KMT_CLICK pairing
+    // below be identified by *key* rather than only by matching position,
+    // which is what makes a relocated fire anchor round-trip correctly.
+    const QString shootButtonStr = root.value("shootButton").toString();
+    const bool fireAnchorEnabledFlag = root.value("fireAnchorEnabled").toBool(false);
 
     ControlNode lookNode;
     bool haveLookNode = false;
@@ -389,12 +413,22 @@ bool KeyMapProfileStore::fromJson(const QString &json, QString &switchKey, QStri
             if (type == "KMT_CLICK") {
                 const QString key = obj.value("key").toString();
                 const QPointF pos = jsonPos(obj, "pos");
-                // A CLICK bound to the same key we'd default AimPanShoot's
-                // shoot button to, sitting at the look-node's anchor point,
-                // is recognized as that pair rather than a separate tap spot.
-                if (haveLookNode && (pos - lookNode.pos).manhattanLength() < 0.001) {
+                // A CLICK is recognized as AimPanShoot's shoot pairing (not
+                // a separate tap spot) either because it sits at the look
+                // node's own anchor point (the original, still-default
+                // case - one spot doing double duty), or because its key
+                // matches the root-level shootButton field, which is
+                // written specifically so this pairing survives even once
+                // fireAnchorEnabled moves it to its own, different spot.
+                const bool atLookAnchor = haveLookNode && (pos - lookNode.pos).manhattanLength() < 0.001;
+                const bool isShootButton = haveLookNode && !shootButtonStr.isEmpty() && key == shootButtonStr;
+                if (atLookAnchor || isShootButton) {
                     lookNode.action = ControlActionKind::AimPanShoot;
                     lookNode.key = key;
+                    if (fireAnchorEnabledFlag && !atLookAnchor) {
+                        lookNode.fireAnchorEnabled = true;
+                        lookNode.fireAnchorPos = pos;
+                    }
                     continue;
                 }
                 ControlNode node;
