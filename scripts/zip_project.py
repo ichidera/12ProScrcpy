@@ -86,6 +86,7 @@ def is_hardcoded_excluded(rel: Path) -> bool:
         'CODE_OF_CONDUCT.md',
         '.github',
         'docs/DEVELOPMENT.md',
+        'JOURNEY.md',
     )
     s = rel.as_posix()
     for root in excluded_roots:

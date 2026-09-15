@@ -29,6 +29,7 @@
 
 #ifdef Q_OS_MACOS
 #include "metalvideowindow.h"
+#endif
 
 #ifdef Q_OS_WIN
 #  ifndef WIN32_LEAN_AND_MEAN
@@ -37,8 +38,6 @@
 #  include <Windows.h>
 #  include <hidusage.h>
 #  include "../../util/mousetap/winmousetap.h"
-#endif
-
 #endif
 
 VideoForm::VideoForm(bool framelessWindow, bool skin, bool showToolbar, int decodeMode, QWidget *parent) : QWidget(parent), ui(new Ui::videoForm), m_skin(skin), m_decodeMode(decodeMode)

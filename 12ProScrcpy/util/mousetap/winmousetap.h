@@ -4,6 +4,17 @@
 #include "mousetap.h"
 #include <QRect>
 
+// This header is Windows-only and uses HWND. Make it self-contained so it
+// compiles correctly no matter which .cpp includes it first (some
+// translation units, e.g. mousetap.cpp, don't otherwise pull in Windows.h).
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+
 class WinMouseTap : public MouseTap
 {
 public:
