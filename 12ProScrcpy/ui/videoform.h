@@ -3,6 +3,7 @@
 
 #include <QPointer>
 #include <QTimer>
+#include <QPointF>
 #include <QWidget>
 
 #include "../12ProScrcpyCore/include/QtScrcpyCore.h"
@@ -80,6 +81,13 @@ protected:
     void closeEvent(QCloseEvent *event) override;
     void changeEvent(QEvent *event) override;
 
+#ifdef Q_OS_WIN
+    // Intercepts WM_INPUT before Qt's message loop can coalesce it into
+    // a WM_MOUSEMOVE.  Delivers every raw hardware sample directly to
+    // sendRealTouch(MOVE) so the phone pointer tracks at full mouse poll rate.
+    bool nativeEvent(const QByteArray &eventType, void *message, qintptr *result) override;
+#endif
+
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dragMoveEvent(QDragMoveEvent *event) override;
     void dragLeaveEvent(QDragLeaveEvent *event) override;
@@ -114,6 +122,14 @@ private:
     int m_decodeMode = 0;
     bool m_metalFirstFrame = true;  // Metal 首次帧标记
     bool m_flexDisplay = false;
+
+#ifdef Q_OS_WIN
+    // Raw Input state — accumulated absolute cursor position (screen-space)
+    // and left-button held flag used by the WM_INPUT handler.
+    QPointF m_rawCursorPos;         // current absolute position in screen pixels
+    bool    m_rawButtonDown = false; // true while LMB is held (drag / touch-move active)
+    bool    m_rawInputActive = false; // true while Raw Input is registered for this window
+#endif
     bool m_preventAutoResize = false;
     QTimer m_flexResizeTimer;
     QSize m_pendingDisplaySize;

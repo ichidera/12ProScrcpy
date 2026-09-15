@@ -29,6 +29,16 @@
 
 #ifdef Q_OS_MACOS
 #include "metalvideowindow.h"
+
+#ifdef Q_OS_WIN
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  include <Windows.h>
+#  include <hidusage.h>
+#  include "../../util/mousetap/winmousetap.h"
+#endif
+
 #endif
 
 VideoForm::VideoForm(bool framelessWindow, bool skin, bool showToolbar, int decodeMode, QWidget *parent) : QWidget(parent), ui(new Ui::videoForm), m_skin(skin), m_decodeMode(decodeMode)
@@ -646,6 +656,23 @@ void VideoForm::grabCursor(bool grab)
 {
     QRect rc = getGrabCursorRect();
     MouseTap::getInstance()->enableMouseEventTap(rc, grab);
+
+#ifdef Q_OS_WIN
+    auto *winTap = static_cast<WinMouseTap *>(MouseTap::getInstance());
+    if (grab) {
+        // Seed the accumulated position from the current real cursor position
+        // so the first WM_INPUT delta lands in the right place.
+        POINT pt;
+        GetCursorPos(&pt);
+        m_rawCursorPos  = QPointF(pt.x, pt.y);
+        m_rawButtonDown = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+        m_rawInputActive = true;
+        winTap->registerRawInput(reinterpret_cast<HWND>(winId()));
+    } else {
+        m_rawInputActive = false;
+        winTap->unregisterRawInput();
+    }
+#endif
 }
 
 void VideoForm::onFrame(int width, int height, uint8_t *dataY, uint8_t *dataU, uint8_t *dataV, int linesizeY, int linesizeU, int linesizeV)
@@ -1026,3 +1053,122 @@ void VideoForm::dropEvent(QDropEvent *event)
         emit device->pushFileRequest(file, Config::getInstance().getPushFilePath() + fileInfo.fileName());
     }
 }
+
+#ifdef Q_OS_WIN
+// ---------------------------------------------------------------------------
+// Raw Input handler — Windows only
+//
+// WM_MOUSEMOVE is coalesced by the Windows message queue: at 1000 Hz mouse
+// polling you still only get ~125 WM_MOUSEMOVE/s because the queue drops
+// intermediate moves when the message hasn't been picked up yet.
+//
+// WM_INPUT is NOT coalesced — every hardware sample arrives here immediately,
+// before the message loop has a chance to merge it with a pending WM_MOUSEMOVE.
+// We synthesize a QMouseEvent from the raw position and call device->mouseEvent()
+// directly, then return true to consume the message so the coalesced
+// WM_MOUSEMOVE Qt would later generate for the same motion is suppressed.
+//
+// Press / release still go through the normal mousePressEvent /
+// mouseReleaseEvent path — WM_LBUTTONDOWN etc. are never coalesced, so
+// there is no benefit to raw-inputting them, and keeping them on the Qt path
+// means all middle/right-button and drag-window logic stays untouched.
+// ---------------------------------------------------------------------------
+bool VideoForm::nativeEvent(const QByteArray &eventType, void *message, qintptr *result)
+{
+    Q_UNUSED(eventType)
+    Q_UNUSED(result)
+
+    MSG *msg = static_cast<MSG *>(message);
+
+    // Pass WM_MOUSEMOVE through when Raw Input is not active (cursor not grabbed).
+    if (!m_rawInputActive) return false;
+
+    // ── Suppress coalesced WM_MOUSEMOVE — Raw Input already handled it ────
+    // When we return true from a WM_INPUT, Windows still posts a synthetic
+    // WM_MOUSEMOVE for the same motion. Eat it so mouseMoveEvent() doesn't
+    // send a stale duplicate MOVE to the daemon.
+    if (msg->message == WM_MOUSEMOVE) {
+        return true; // consumed — raw path already dispatched this motion
+    }
+
+    if (msg->message != WM_INPUT) return false;
+
+    // ── Parse RAWINPUT ────────────────────────────────────────────────────
+    UINT size = 0;
+    GetRawInputData(reinterpret_cast<HRAWINPUT>(msg->lParam),
+                    RID_INPUT, nullptr, &size, sizeof(RAWINPUTHEADER));
+    if (size == 0) return false;
+
+    RAWINPUT  stackBuf;
+    RAWINPUT *raw = &stackBuf;
+    QByteArray heapBuf;
+    if (size > sizeof(RAWINPUT)) {
+        heapBuf.resize(static_cast<int>(size));
+        raw = reinterpret_cast<RAWINPUT *>(heapBuf.data());
+    }
+
+    UINT got = size;
+    if (GetRawInputData(reinterpret_cast<HRAWINPUT>(msg->lParam),
+                        RID_INPUT, raw, &got, sizeof(RAWINPUTHEADER)) == static_cast<UINT>(-1)) {
+        return false;
+    }
+    if (raw->header.dwType != RIM_TYPEMOUSE) return false;
+
+    const RAWMOUSE &rm = raw->data.mouse;
+
+    // ── Track button state ────────────────────────────────────────────────
+    if (rm.usButtonFlags & RI_MOUSE_LEFT_BUTTON_DOWN) m_rawButtonDown = true;
+    if (rm.usButtonFlags & RI_MOUSE_LEFT_BUTTON_UP)   m_rawButtonDown = false;
+
+    // ── Accumulate absolute position ──────────────────────────────────────
+    if (rm.usFlags & MOUSE_MOVE_ABSOLUTE) {
+        bool vd   = (rm.usFlags & MOUSE_VIRTUAL_DESKTOP) != 0;
+        int  scrW = GetSystemMetrics(vd ? SM_CXVIRTUALSCREEN : SM_CXSCREEN);
+        int  scrH = GetSystemMetrics(vd ? SM_CYVIRTUALSCREEN : SM_CYSCREEN);
+        m_rawCursorPos.setX(static_cast<qreal>(rm.lLastX) * scrW / 65535.0);
+        m_rawCursorPos.setY(static_cast<qreal>(rm.lLastY) * scrH / 65535.0);
+    } else {
+        m_rawCursorPos.rx() += rm.lLastX;
+        m_rawCursorPos.ry() += rm.lLastY;
+    }
+
+    // Clamp to ClipCursor rect — keeps accumulated position inside the video
+    // window even if a large delta would push it past the edge.
+    RECT clip;
+    if (GetClipCursor(&clip)) {
+        m_rawCursorPos.setX(qBound<qreal>(clip.left, m_rawCursorPos.x(), clip.right));
+        m_rawCursorPos.setY(qBound<qreal>(clip.top,  m_rawCursorPos.y(), clip.bottom));
+    }
+
+    // No actual motion (e.g. button-only WM_INPUT packet) — nothing to send.
+    if (rm.lLastX == 0 && rm.lLastY == 0 && !(rm.usFlags & MOUSE_MOVE_ABSOLUTE)) {
+        return false;
+    }
+
+    // Only dispatch MOVE while LMB is down — hovering cursor has no active
+    // touch contact to move.
+    if (!m_rawButtonDown) return false;
+
+    auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
+    if (!device) return false;
+    QWidget *vw = videoWidget();
+    if (!vw) return false;
+
+    // Screen-space → widget-local → synthesized QMouseEvent on the same
+    // public device->mouseEvent() path as the normal Qt route, so all
+    // InputConvert coordinate mapping logic runs exactly as before.
+    QPoint screenPt  = m_rawCursorPos.toPoint();
+    QPoint widgetPt  = vw->mapFromGlobal(screenPt);
+    widgetPt.setX(qBound(0, widgetPt.x(), vw->width()  - 1));
+    widgetPt.setY(qBound(0, widgetPt.y(), vw->height() - 1));
+
+    QPointF localF(widgetPt);
+    QPointF globalF(screenPt);
+    QMouseEvent synth(QEvent::MouseMove, localF, globalF,
+                      Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    emit device->mouseEvent(&synth, m_frameSize, vw->size());
+
+    // Consumed — prevent Qt generating a duplicate WM_MOUSEMOVE for this sample.
+    return true;
+}
+#endif // Q_OS_WIN
