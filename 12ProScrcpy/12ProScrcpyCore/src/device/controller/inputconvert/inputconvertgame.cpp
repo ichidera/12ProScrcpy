@@ -29,7 +29,14 @@ void InputConvertGame::mouseEvent(const QMouseEvent *from, const QSize &frameSiz
 {
     // 处理开关按键
     if (m_keyMap.isSwitchOnKeyboard() == false && m_keyMap.getSwitchKey() == static_cast<int>(from->button())) {
-        if (from->type() != QEvent::MouseButtonPress) {
+        // Same rapid-click issue as InputConvertNormal::mouseEvent(): Qt
+        // merges a fast second click into QEvent::MouseButtonDblClick rather
+        // than another MouseButtonPress, so a switch key bound to a mouse
+        // button (rather than a keyboard key - see isSwitchOnKeyboard())
+        // could silently fail to toggle on a quick double-tap of that
+        // button. Accept DblClick here too, same as processMouseClick()
+        // already does for ordinary click nodes.
+        if (from->type() != QEvent::MouseButtonPress && from->type() != QEvent::MouseButtonDblClick) {
             return;
         }
         if (!switchGameMap()) {
