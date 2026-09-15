@@ -85,7 +85,7 @@ def is_hardcoded_excluded(rel: Path) -> bool:
         'CONTRIBUTING.md',
         'CODE_OF_CONDUCT.md',
         '.github',
-        'docs/DEVELOPMENT.md',
+        'docs',
         'JOURNEY.md',
     )
     s = rel.as_posix()

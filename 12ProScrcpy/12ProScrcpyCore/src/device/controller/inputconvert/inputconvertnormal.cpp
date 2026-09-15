@@ -18,6 +18,17 @@ void InputConvertNormal::mouseEvent(const QMouseEvent *from, const QSize &frameS
     AndroidMotioneventAction action;
     switch (from->type()) {
     case QEvent::MouseButtonPress:
+    case QEvent::MouseButtonDblClick:
+        // Qt's own OS-level double-click detection turns every *second*
+        // rapid click into a QEvent::MouseButtonDblClick instead of another
+        // MouseButtonPress (Press -> Release -> DblClick -> Release). With
+        // no case for it here, that DOWN was silently dropped (fell to
+        // `default: return`), while its matching Release still went out as
+        // an UP with no paired DOWN - net effect: every other fast mouse
+        // click did nothing on-device, while finger taps on the real
+        // touchscreen (no such merging) always registered. InputConvertGame
+        // already treats DblClick as a DOWN trigger (see
+        // processMouseClick()); do the same here.
         action = AMOTION_EVENT_ACTION_DOWN;
         break;
     case QEvent::MouseButtonRelease:
