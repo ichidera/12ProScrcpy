@@ -65,7 +65,16 @@ private:
     bool pushDaemon(const QString &serial);
     bool launchDaemon(const QString &serial);
     bool resolveRndisAddress(const QString &serial);
+    // Fire-and-forget: drops the packet on EAGAIN/EWOULDBLOCK. Fine for
+    // MOVE, which Controller::dispatchOrQueueTouchMove() already coalesces
+    // ("send the newest position" beats "send every position").
     void sendPacket(const uint8_t pkt[kPktSize]);
+    // Same wire send, but retries briefly on EAGAIN/EWOULDBLOCK instead of
+    // dropping. Used for DOWN/UP/FRAME: unlike MOVE these are discrete,
+    // non-coalescable events - a dropped DOWN never taps at all, and a
+    // dropped UP leaves a stuck touch point on the phone until something
+    // else touches that slot. See BUG FIX comment at the definition.
+    void sendPacketReliable(const uint8_t pkt[kPktSize]);
     void fail(const QString &message);
 
     // Encode v as big-endian int16_t into dst[0..1].

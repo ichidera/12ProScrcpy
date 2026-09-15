@@ -341,6 +341,80 @@ void RawInputDaemonSession::sendPacket(const uint8_t pkt[kPktSize])
     emit writesFlushed();
 }
 
+// BUG FIX (2026-09-15): touchDown()/touchUp()/ensureFrameSize() used to call
+// the same drop-on-full sendPacket() that touchMove() uses. That's correct
+// for MOVE (a stale position is harmless - a fresher one always follows,
+// and Controller::dispatchOrQueueTouchMove() already coalesces them), but
+// DOWN/UP/FRAME are discrete, one-shot events with nothing to supersede
+// them: a dropped DOWN simply never taps, and a dropped UP leaves that slot
+// stuck "touching" on the phone until something else happens to touch it
+// again. Reported symptom: repeated fast taps (keyboard keymap buttons, and
+// previously fast mouse clicks) missing some presses even after the
+// InputConvertNormal/InputConvertGame DblClick-vs-Press fixes above them -
+// those fixes ensured every intended tap reached this layer as a DOWN/UP
+// pair; this is the layer that could still silently swallow one after that.
+// sendPacketReliable() retries briefly on EAGAIN/EWOULDBLOCK (send buffer
+// momentarily full - plausible under a burst of fast taps) instead of
+// dropping immediately. Bounded to a few ms total so a genuinely wedged
+// socket still can't hang the caller (typically the UI thread) - at that
+// point dropping (with a warning, same as before) is the least-bad option.
+void RawInputDaemonSession::sendPacketReliable(const uint8_t pkt[kPktSize])
+{
+    if (!sockValid(m_sockfd)) return;
+
+    SockFd fd = toSockFd(m_sockfd);
+    constexpr int kMaxRetries  = 20;
+    constexpr int kRetryWaitUs = 500; // ~0.5ms per wait, ~10ms worst case total
+
+    for (int attempt = 0; attempt <= kMaxRetries; ++attempt) {
+        SendLen n = SOCK_SEND(fd, pkt, kPktSize);
+        if (n == static_cast<SendLen>(kPktSize)) {
+            emit writesFlushed();
+            return;
+        }
+
+#ifdef Q_OS_WIN
+        int  e          = WSAGetLastError();
+        bool wouldBlock = (e == WSAEWOULDBLOCK);
+#else
+        bool wouldBlock = (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK));
+#endif
+        if (!wouldBlock) {
+            // Unexpected error (not "buffer full") - same as sendPacket(),
+            // log and give up rather than retry into a dead socket.
+#ifdef Q_OS_WIN
+            qWarning() << "RawInputDaemonSession: send failed, WSAError=" << e;
+#else
+            qWarning() << "RawInputDaemonSession: send failed, errno=" << errno;
+#endif
+            emit writesFlushed();
+            return;
+        }
+
+        if (attempt == kMaxRetries) {
+            qWarning() << "RawInputDaemonSession: send buffer still full after"
+                       << kMaxRetries << "retries, dropping packet (cmd" << pkt[0] << ")";
+            emit writesFlushed();
+            return;
+        }
+
+        // Wait briefly for the socket to become writable again rather than
+        // busy-looping on send(). select()'s per-call timeout also caps how
+        // long any single retry can take.
+        fd_set wfds;
+        FD_ZERO(&wfds);
+        FD_SET(fd, &wfds);
+        struct timeval tv;
+        tv.tv_sec  = 0;
+        tv.tv_usec = kRetryWaitUs;
+#ifdef Q_OS_WIN
+        ::select(0, nullptr, &wfds, nullptr, &tv);
+#else
+        ::select(fd + 1, nullptr, &wfds, nullptr, &tv);
+#endif
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Public wire-protocol methods
 // ---------------------------------------------------------------------------
@@ -356,7 +430,7 @@ void RawInputDaemonSession::ensureFrameSize(const QSize &frameSize)
     pkt[1] = 0;
     putI16(pkt + 2, static_cast<int16_t>(frameSize.width()));
     putI16(pkt + 4, static_cast<int16_t>(frameSize.height()));
-    sendPacket(pkt);
+    sendPacketReliable(pkt);
     m_lastSentFrameSize = frameSize;
 }
 
@@ -371,7 +445,7 @@ void RawInputDaemonSession::touchDown(int slot, int trackId,
     putI16(pkt + 2, static_cast<int16_t>(trackId));
     putI16(pkt + 4, static_cast<int16_t>(framePos.x()));
     putI16(pkt + 6, static_cast<int16_t>(framePos.y()));
-    sendPacket(pkt);
+    sendPacketReliable(pkt);
 }
 
 void RawInputDaemonSession::touchMove(int slot,
@@ -384,7 +458,7 @@ void RawInputDaemonSession::touchMove(int slot,
     pkt[1] = static_cast<uint8_t>(slot);
     putI16(pkt + 2, static_cast<int16_t>(framePos.x()));
     putI16(pkt + 4, static_cast<int16_t>(framePos.y()));
-    sendPacket(pkt);
+    sendPacket(pkt); // drop-on-full is fine here - see sendPacket() comment
 }
 
 void RawInputDaemonSession::touchUp(int slot)
@@ -392,5 +466,5 @@ void RawInputDaemonSession::touchUp(int slot)
     uint8_t pkt[kPktSize] = {};
     pkt[0] = kCmdUp;
     pkt[1] = static_cast<uint8_t>(slot);
-    sendPacket(pkt);
+    sendPacketReliable(pkt);
 }
