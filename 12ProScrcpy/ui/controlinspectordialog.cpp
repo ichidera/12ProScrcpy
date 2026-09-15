@@ -61,6 +61,29 @@ void KeyCaptureButton::cancelCapture()
     refreshText();
 }
 
+bool KeyCaptureButton::event(QEvent *event)
+{
+    // QWidget::event() intercepts Key_Tab / Key_Backtab *before* they ever
+    // reach keyPressEvent(): it calls focusNextPrevChild() for plain Tab
+    // presses and, since that succeeds (moves focus to the next widget in
+    // the dialog), returns true without dispatching a KeyPress event at
+    // all. grabKeyboard() in startCapture() does not change this - it only
+    // ensures *this* widget is the one receiving the raw key event, not
+    // that Tab is exempted from the focus-switch shortcut. The net effect
+    // without this override: Tab can never be captured as a bindable key,
+    // it just silently moves focus to the next field instead.
+    // Catching it here, ahead of the base class's Tab handling, routes it
+    // straight to keyPressEvent() like any other key while capturing.
+    if (m_capturing && event->type() == QEvent::KeyPress) {
+        auto *keyEvent = static_cast<QKeyEvent *>(event);
+        if (keyEvent->key() == Qt::Key_Tab || keyEvent->key() == Qt::Key_Backtab) {
+            keyPressEvent(keyEvent);
+            return true;
+        }
+    }
+    return QPushButton::event(event);
+}
+
 void KeyCaptureButton::mousePressEvent(QMouseEvent *event)
 {
     if (!m_capturing) {

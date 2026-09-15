@@ -47,8 +47,19 @@ void InputConvertGame::mouseEvent(const QMouseEvent *from, const QSize &frameSiz
 
     if (!m_needBackMouseMove && m_gameMap) {
         updateSize(frameSize, showSize);
-        // mouse move
-        if (m_keyMap.isValidMouseMoveMap()) {
+        // mouse move (Aim/Pan/Shoot, Free Look): only steals the mouse-move
+        // stream to drive the synthetic look-touch once the user has
+        // actually locked+hidden the OS cursor with m_cursorLockKey. Before
+        // that, isValidMouseMoveMap() alone was enough to activate it, so
+        // pan/look ran continuously the instant the custom keymap turned
+        // on - cursor-lock state and "is pan active" were decoupled even
+        // though switchGameMap()'s own comment says that coupling is
+        // supposed to be gone in the other direction only (switch key no
+        // longer *forces* a lock, it doesn't mean lock stops mattering).
+        // toggleCursorLock() already refuses to engage without a valid
+        // mouseMoveMap - this is the matching other half: don't let pan run
+        // without an engaged lock, either.
+        if (m_keyMap.isValidMouseMoveMap() && m_cursorLocked) {
             if (processMouseMove(from)) {
                 return;
             }
