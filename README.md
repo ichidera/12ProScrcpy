@@ -3,11 +3,26 @@
 A [QtScrcpy](https://github.com/barry-ran/QtScrcpy) fork rebuilt around
 **root-elevated raw input injection** for rooted Android devices where
 scrcpy's normal control-socket input path hits an `INJECT_EVENTS`
-permission wall — touch, buttons, scroll, and keyboard are driven via a
-persistent `adb shell su` session using `sendevent` directly against real
-kernel input nodes (with a root-elevated `input keyevent` fallback for keys
-without a confirmed hardware node), instead of relying on
-`scrcpy-server`'s unprivileged input-injection path.
+permission wall.
+
+Two input backends exist, both bypassing `scrcpy-server`'s unprivileged
+input path entirely:
+
+- **`AdbSendEventSession`** (default, always available) — a persistent
+  `adb shell su` session issuing `sendevent` directly against real kernel
+  input nodes, with a root-elevated `input keyevent` fallback for keys
+  without a confirmed hardware node.
+- **`RawInputDaemonSession`** (opt-in, faster) — a small persistent daemon
+  pushed to and run on the device itself, talked to over a raw TCP socket
+  on the phone's USB-RNDIS interface. Removes the per-touch-event process-spawn
+  cost `AdbSendEventSession` has (every `sendevent` call forks a new
+  process on-device), which is the difference between touch that feels
+  "close enough" and touch that feels like a real finger. See
+  [`docs/daemon-implementation-plan.md`](docs/daemon-implementation-plan.md).
+  **Requires USB tethering enabled on the phone** (Settings → Network &
+  Internet → Hotspot & tethering → USB tethering) — without it the daemon
+  can't resolve an IP to connect to and touch is silently dropped rather
+  than falling back (a deliberate choice, not a bug — see the dev doc).
 
 `scrcpy-server.jar` is still used for what it's actually needed for —
 video/audio mirroring and device→PC signaling — it's just no longer in the
@@ -62,13 +77,16 @@ for how to re-derive it.)*
 12ProScrcpy/
 ├── 12ProScrcpy/                    # Qt GUI application
 │   └── 12ProScrcpyCore/             # Core device-communication library
-│       ├── src/adb/                 # AdbSendEventSession - the root-shell sendevent channel
+│       ├── src/adb/                 # AdbSendEventSession + RawInputDaemonSession (PC-side clients)
+│       ├── src/rawinputdaemon/      # raw_input_daemon.c - on-device daemon binary source
 │       ├── src/device/controller/   # Controller - the real input-dispatch hub
 │       └── src/third_party/         # NOT tracked in git - see docs/DEVELOPMENT.md §2
 ├── docs/
 │   ├── DEVELOPMENT.md               # Full build guide + architecture
 │   ├── real-device-adb-sendevent.md # Hardware calibration reference
-│   └── raw-input-daemon-design.md   # Deferred future-work design doc
+│   ├── raw-input-daemon-design.md   # Original daemon design doc + rotation-compensation experiment result
+│   ├── daemon-implementation-plan.md# Daemon build plan, phased
+│   └── JOURNEY.md                   # War stories from getting this all working
 ├── scripts/                         # Dev helper scripts (project zip export, etc.)
 └── config/
 ```
@@ -103,6 +121,29 @@ cmake --build . --config Release
 see `docs/DEVELOPMENT.md` §2 for where to get it; without it, the build
 fails with a missing `libavcodec/avcodec.h` error.
 
+### Optional: building the raw-input daemon
+
+The daemon backend (faster touch, see above) needs a separate arm64 build
+pushed to the device, alongside the PC-side app build:
+
+```powershell
+cd 12ProScrcpy\12ProScrcpyCore\src\rawinputdaemon
+aarch64-linux-android30-clang -static raw_input_daemon.c -o qtscrcpy_raw_input_daemon
+copy qtscrcpy_raw_input_daemon <repo_root>\output\x64\Release\qtscrcpy_raw_input_daemon
+```
+
+**The binary name and location matter** — `RawInputDaemonSession` looks
+for exactly `qtscrcpy_raw_input_daemon` next to `12ProScrcpy.exe` (same
+directory `adb.exe`/`scrcpy-server` already live in) and pushes/launches it
+itself; it does not use whatever's already running on the device under a
+different name. You do not need to manually `adb push`/`adb shell` it
+yourself — that's only useful for isolated testing of the daemon binary on
+its own, outside the app.
+
+**Also requires USB tethering enabled on the phone** (see above) — this is
+separate from USB *debugging*, easy to have one on without the other, and
+the single most common reason the daemon silently fails to connect.
+
 ## Usage
 
 Connect your rooted device over USB (or configured wireless ADB), launch
@@ -124,6 +165,14 @@ control icon.
 - **Build fails on a fresh checkout:** almost always either the missing Qt
   modules, a bad Windows SDK pin, or missing `third_party/` — see
   `docs/DEVELOPMENT.md` §2, which documents all three with the exact fixes.
+- **Touch silently does nothing, log shows "raw input daemon not
+  available... dropping touch event":** the daemon backend failed to start
+  and is deliberately not falling back (see the daemon note above). Check,
+  in order: USB tethering is on; the daemon binary is correctly named and
+  placed (see "Optional: building the raw-input daemon" above); and the
+  app was actually *reconnected* after fixing either of those — the daemon
+  is only attempted once per connection, so fixing the cause after a failed
+  attempt doesn't retroactively retry it within the same session.
 
 ## Contributing
 
