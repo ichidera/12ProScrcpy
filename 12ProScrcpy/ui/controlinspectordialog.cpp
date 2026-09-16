@@ -244,14 +244,18 @@ QWidget *ControlInspectorDialog::buildFieldsForAction()
         }
 
         m_lookSpeedXSpin = new QDoubleSpinBox(w);
-        m_lookSpeedXSpin->setRange(1.0, 100.0);
+        m_lookSpeedXSpin->setRange(0.0, 10.0);
+        m_lookSpeedXSpin->setDecimals(2);
+        m_lookSpeedXSpin->setSingleStep(0.1);
         m_lookSpeedXSpin->setValue(m_node.lookSpeedX);
-        form->addRow(tr("Look speed X"), m_lookSpeedXSpin);
+        form->addRow(tr("Mouse sensitivity X (horizontal)"), m_lookSpeedXSpin);
 
         m_lookSpeedYSpin = new QDoubleSpinBox(w);
-        m_lookSpeedYSpin->setRange(1.0, 100.0);
+        m_lookSpeedYSpin->setRange(0.0, 10.0);
+        m_lookSpeedYSpin->setDecimals(2);
+        m_lookSpeedYSpin->setSingleStep(0.1);
         m_lookSpeedYSpin->setValue(m_node.lookSpeedY);
-        form->addRow(tr("Look speed Y"), m_lookSpeedYSpin);
+        form->addRow(tr("Mouse sensitivity Y (vertical)"), m_lookSpeedYSpin);
 
         m_smallEyesCapture = new KeyCaptureButton(w);
         m_smallEyesCapture->setBoundKeyString(m_node.smallEyesKey);

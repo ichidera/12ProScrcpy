@@ -49,8 +49,14 @@ struct ControlNode
     float dragSpeed = 1.0f;
 
     // FreeLook / AimPanShoot only (there can be at most one such node per profile)
-    float lookSpeedX = 18.0f;
-    float lookSpeedY = 8.0f;
+    // Mouse sensitivity as a MULTIPLIER on raw mouse movement, on the
+    // 0.00-10.00 scale the UI exposes. 1.00 = camera tracks the mouse at
+    // roughly desktop-cursor speed, 2.00 = twice as fast, matching how
+    // mainstream emulators define it. These were previously divisors
+    // (18/8), where bigger meant slower - see KeyMap::loadKeyMap() for
+    // the legacy conversion.
+    float lookSpeedX = 1.0f;
+    float lookSpeedY = 1.0f;
     QString smallEyesKey; // optional toggle key, empty = disabled
     // Held (not toggled) to temporarily free the cursor and pause
     // shoot-mode - same idea as BlueStacks' "Suspend" key on Aim, Pan and

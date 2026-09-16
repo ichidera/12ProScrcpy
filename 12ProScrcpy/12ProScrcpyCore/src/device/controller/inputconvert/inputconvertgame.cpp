@@ -721,8 +721,8 @@ bool InputConvertGame::processMouseMove(const QMouseEvent *from)
 #else
         QPointF distance_raw{from->position() - lastPos};
 #endif
-        QPointF speedRatio  {m_keyMap.getMouseMoveMap().data.mouseMove.speedRatio};
-        QPointF distance    {distance_raw.x() / speedRatio.x(), distance_raw.y() / speedRatio.y()};
+        QPointF sensitivity {m_keyMap.getMouseMoveMap().data.mouseMove.sensitivity};
+        QPointF distance    {distance_raw.x() * sensitivity.x(), distance_raw.y() * sensitivity.y()};
 
         mouseMoveStartTouch(from);
         // The 500ms idle timer lifts the pan finger after a pause in

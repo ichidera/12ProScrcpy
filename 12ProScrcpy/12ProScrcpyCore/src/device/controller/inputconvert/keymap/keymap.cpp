@@ -8,6 +8,23 @@
 
 #include "keymap.h"
 
+namespace {
+// The old schema stored mouse look speed as a DIVISOR ("speedRatio"):
+// distance = raw / ratio, so larger values meant slower movement. The
+// current schema stores a MULTIPLIER ("sensitivity"), matching how
+// mainstream emulators express it (1 = same as the desktop cursor, 2 =
+// twice as fast). Converting rather than reusing the number keeps old
+// profiles feeling exactly as they did instead of turning, say, a divisor
+// of 18 into an 18x multiplier.
+float legacyRatioToSensitivity(float ratio)
+{
+    if (ratio < 0.001f) {
+        return 1.0f; // was effectively a divide by zero; fall back to neutral
+    }
+    return 1.0f / ratio;
+}
+} // namespace
+
 KeyMap::KeyMap(QObject *parent) : QObject(parent) {}
 
 KeyMap::~KeyMap() {}
@@ -50,37 +67,59 @@ void KeyMap::loadKeyMap(const QString &json)
         KeyMapNode keyMapNode;
         keyMapNode.type = KMT_MOUSE_MOVE;
 
-        bool have_speedRatio = false;
+        bool have_sensitivity = false;
 
-        // General speedRatio (for backwards compatibility)
+        // ── Legacy divisor form (speedRatio / speedRatioX / speedRatioY) ──
+        // These were divisors: distance = raw / ratio, so a bigger number
+        // meant *slower*. Convert to the multiplier form (1/ratio) so old
+        // profiles keep the exact feel they had rather than being
+        // reinterpreted as enormous multipliers.
         if (checkItemDouble(mouseMoveMap, "speedRatio")) {
             float ratio = static_cast<float>(getItemDouble(mouseMoveMap, "speedRatio"));
-            keyMapNode.data.mouseMove.speedRatio.setX(ratio);
-            keyMapNode.data.mouseMove.speedRatio.setY(ratio / 2.25f); // Phone screens are often FHD+
-            have_speedRatio = true;
+            keyMapNode.data.mouseMove.sensitivity.setX(legacyRatioToSensitivity(ratio));
+            keyMapNode.data.mouseMove.sensitivity.setY(legacyRatioToSensitivity(ratio / 2.25f)); // Phone screens are often FHD+
+            have_sensitivity = true;
         }
 
-        // Individual X Ratio
         if (checkItemDouble(mouseMoveMap, "speedRatioX")) {
-            keyMapNode.data.mouseMove.speedRatio.setX(static_cast<float>(getItemDouble(mouseMoveMap, "speedRatioX")));
-            have_speedRatio = true;
+            keyMapNode.data.mouseMove.sensitivity.setX(legacyRatioToSensitivity(static_cast<float>(getItemDouble(mouseMoveMap, "speedRatioX"))));
+            have_sensitivity = true;
         }
 
-        // Individual Y Ratio
         if (checkItemDouble(mouseMoveMap, "speedRatioY")) {
-            keyMapNode.data.mouseMove.speedRatio.setY(static_cast<float>(getItemDouble(mouseMoveMap, "speedRatioY")));
-            have_speedRatio = true;
+            keyMapNode.data.mouseMove.sensitivity.setY(legacyRatioToSensitivity(static_cast<float>(getItemDouble(mouseMoveMap, "speedRatioY"))));
+            have_sensitivity = true;
         }
 
-        if (!have_speedRatio) {
-            errorString = QString("json error: speedRatio setting is missing in mouseMoveMap!");
+        // ── Current multiplier form ──
+        // Read last so that a profile carrying both forms (one written by a
+        // new build, then opened by an old one and saved again) is governed
+        // by the multiplier rather than the stale divisor.
+        if (checkItemDouble(mouseMoveMap, "sensitivityX")) {
+            keyMapNode.data.mouseMove.sensitivity.setX(static_cast<float>(getItemDouble(mouseMoveMap, "sensitivityX")));
+            have_sensitivity = true;
+        }
+
+        if (checkItemDouble(mouseMoveMap, "sensitivityY")) {
+            keyMapNode.data.mouseMove.sensitivity.setY(static_cast<float>(getItemDouble(mouseMoveMap, "sensitivityY")));
+            have_sensitivity = true;
+        }
+
+        if (!have_sensitivity) {
+            errorString = QString("json error: sensitivity setting is missing in mouseMoveMap!");
             goto parseError;
         }
 
-        // Sanity check: No ratio must be lower than 0.001
-        if ( ( keyMapNode.data.mouseMove.speedRatio.x() < 0.001f ) || ( keyMapNode.data.mouseMove.speedRatio.x() < 0.001f ) ) {
-            errorString = QString("json error: Minimum speedRatio is 0.001");
-            goto parseError;
+        // Sanity check: a multiplier of 0 means "mouse movement produces no
+        // camera movement at all", which is useless but harmless - clamp it
+        // to a floor rather than rejecting the whole profile the way the old
+        // divisor check did (there, a small number meant an enormous
+        // multiplier, so it genuinely had to be rejected).
+        if (keyMapNode.data.mouseMove.sensitivity.x() < 0.001f) {
+            keyMapNode.data.mouseMove.sensitivity.setX(0.001f);
+        }
+        if (keyMapNode.data.mouseMove.sensitivity.y() < 0.001f) {
+            keyMapNode.data.mouseMove.sensitivity.setY(0.001f);
         }
 
         if (!checkItemObject(mouseMoveMap, "startPos")) {

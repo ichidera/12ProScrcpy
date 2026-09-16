@@ -237,8 +237,13 @@ QString KeyMapProfileStore::toJson(const QString &switchKey, const QString &curs
             continue;
         }
         QJsonObject mouseMoveMap;
-        mouseMoveMap.insert("speedRatioX", node.lookSpeedX);
-        mouseMoveMap.insert("speedRatioY", node.lookSpeedY);
+        // Multiplier, not the old "speedRatio" divisor - see
+        // KeyMap::loadKeyMap(), which still reads the legacy keys and
+        // converts them. Deliberately not writing the legacy keys back out:
+        // emitting both would leave two contradictory numbers in the file
+        // for the same setting.
+        mouseMoveMap.insert("sensitivityX", node.lookSpeedX);
+        mouseMoveMap.insert("sensitivityY", node.lookSpeedY);
         mouseMoveMap.insert("startPos", posJson(node.pos));
         if (!node.smallEyesKey.isEmpty()) {
             QJsonObject smallEyes = clickJson(node.smallEyesKey, node.pos, false);
@@ -372,13 +377,30 @@ bool KeyMapProfileStore::fromJson(const QString &json, QString &switchKey, QStri
         QJsonObject mouseMoveMap = root.value("mouseMoveMap").toObject();
         lookNode.action = ControlActionKind::FreeLook;
         lookNode.pos = jsonPos(mouseMoveMap, "startPos");
+        // Legacy divisor keys are converted to the multiplier scale (1/ratio),
+        // mirroring KeyMap::loadKeyMap(), so an old profile opened in the
+        // editor shows the value that actually reproduces its old feel
+        // rather than a number on a scale that no longer exists. Current
+        // "sensitivity*" keys are read afterwards so they win outright if a
+        // file somehow carries both.
+        auto legacyRatioToSensitivity = [](float ratio) -> float { return ratio < 0.001f ? 1.0f : 1.0f / ratio; };
         if (mouseMoveMap.contains("speedRatioX")) {
-            lookNode.lookSpeedX = static_cast<float>(mouseMoveMap.value("speedRatioX").toDouble(lookNode.lookSpeedX));
+            lookNode.lookSpeedX = legacyRatioToSensitivity(static_cast<float>(mouseMoveMap.value("speedRatioX").toDouble(1.0)));
         } else if (mouseMoveMap.contains("speedRatio")) {
-            lookNode.lookSpeedX = static_cast<float>(mouseMoveMap.value("speedRatio").toDouble(lookNode.lookSpeedX));
+            lookNode.lookSpeedX = legacyRatioToSensitivity(static_cast<float>(mouseMoveMap.value("speedRatio").toDouble(1.0)));
         }
         if (mouseMoveMap.contains("speedRatioY")) {
-            lookNode.lookSpeedY = static_cast<float>(mouseMoveMap.value("speedRatioY").toDouble(lookNode.lookSpeedY));
+            lookNode.lookSpeedY = legacyRatioToSensitivity(static_cast<float>(mouseMoveMap.value("speedRatioY").toDouble(1.0)));
+        } else if (mouseMoveMap.contains("speedRatio")) {
+            // The old general-ratio path divided Y by 2.25 ("phone screens
+            // are often FHD+") before using it as a divisor.
+            lookNode.lookSpeedY = legacyRatioToSensitivity(static_cast<float>(mouseMoveMap.value("speedRatio").toDouble(1.0)) / 2.25f);
+        }
+        if (mouseMoveMap.contains("sensitivityX")) {
+            lookNode.lookSpeedX = static_cast<float>(mouseMoveMap.value("sensitivityX").toDouble(lookNode.lookSpeedX));
+        }
+        if (mouseMoveMap.contains("sensitivityY")) {
+            lookNode.lookSpeedY = static_cast<float>(mouseMoveMap.value("sensitivityY").toDouble(lookNode.lookSpeedY));
         }
         if (mouseMoveMap.contains("smallEyes") && mouseMoveMap.value("smallEyes").isObject()) {
             lookNode.smallEyesKey = mouseMoveMap.value("smallEyes").toObject().value("key").toString();

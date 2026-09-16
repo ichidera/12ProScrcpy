@@ -99,7 +99,18 @@ public:
             struct
             {
                 QPointF startPos   = { 0.0, 0.0 };
-                QPointF speedRatio = { 1.0, 1.0 };
+                // Mouse sensitivity as a MULTIPLIER, matching the convention
+                // every mainstream emulator uses (BlueStacks: "If
+                // Sensitivity = 1, the mouse sensitivity is the same as the
+                // Windows cursor sensitivity"; 2 = twice as fast; larger =
+                // more sensitive). This used to be a divisor named
+                // speedRatio, which inverted the whole scale: bigger meant
+                // slower, and by the time you reached the double digits the
+                // per-sample movement was so small it rounded away almost
+                // entirely in sendTouchEvent()'s integer device-pixel
+                // conversion - which is why values like 28 and 99 felt
+                // identical, and why 0 (a divide by zero) broke it outright.
+                QPointF sensitivity = { 1.0, 1.0 };
                 KeyNode smallEyes;
             } mouseMove;
             struct
