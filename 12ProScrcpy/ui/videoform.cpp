@@ -1054,6 +1054,14 @@ void VideoForm::dropEvent(QDropEvent *event)
 }
 
 #ifdef Q_OS_WIN
+// Distance (in screen px, manhattan) beyond which the Raw Input accumulated
+// cursor position is assumed to have been warped by something else - namely
+// InputConvertGame::checkCursorPos()'s edge recenter, which jumps the cursor
+// most of the way across the window - rather than to have drifted by a
+// single hardware sample. Comfortably above any real per-sample delta at
+// sane polling rates, well below the width of the recenter jump.
+static const int kRawCursorResyncThresholdPx = 100;
+
 // ---------------------------------------------------------------------------
 // Raw Input handler — Windows only
 //
@@ -1144,10 +1152,20 @@ bool VideoForm::nativeEvent(const QByteArray &eventType, void *message, qintptr 
         return false;
     }
 
-    // Only dispatch MOVE while LMB is down — hovering cursor has no active
-    // touch contact to move.
-    if (!m_rawButtonDown) return false;
-
+    // NOTE: this used to early-return unless LMB was held ("hovering cursor
+    // has no active touch contact to move"). That was true only while the
+    // pan finger was planted lazily by the first drag - it is not true now
+    // that engaging shoot-mode plants the finger immediately and keeps it
+    // down for as long as the mode is on (see
+    // InputConvertGame::toggleCursorLock()). Raw Input is registered
+    // *only* while the cursor is grabbed, i.e. only while shoot-mode is
+    // engaged, so every sample that reaches this point is a look/pan
+    // movement that must be forwarded whether or not a button happens to
+    // be held. Combined with the unconditional WM_MOUSEMOVE suppression
+    // above - which eats the Qt path's moves the moment Raw Input goes
+    // active - gating on the button meant that with the cursor locked and
+    // no button held, motion was dropped on *both* paths and pan simply
+    // never followed the cursor until LMB was pressed.
     auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
     if (!device) return false;
     QWidget *vw = videoWidget();
@@ -1163,9 +1181,30 @@ bool VideoForm::nativeEvent(const QByteArray &eventType, void *message, qintptr 
 
     QPointF localF(widgetPt);
     QPointF globalF(screenPt);
+    // Report the real button state rather than hard-coding LeftButton:
+    // a move with no button held is now a legitimate, common case (pan
+    // while not firing), and claiming LMB is down would misrepresent it to
+    // anything downstream that inspects buttons().
+    const Qt::MouseButtons heldButtons = m_rawButtonDown ? Qt::MouseButtons(Qt::LeftButton) : Qt::MouseButtons(Qt::NoButton);
     QMouseEvent synth(QEvent::MouseMove, localF, globalF,
-                      Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+                      Qt::NoButton, heldButtons, Qt::NoModifier);
     emit device->mouseEvent(&synth, m_frameSize, vw->size());
+
+    // InputConvertGame::checkCursorPos() recenters the real cursor when a
+    // pan reaches the edge of the usable area, so the look can keep going
+    // past it. That warp happens behind Raw Input's back: m_rawCursorPos is
+    // accumulated from hardware deltas and knows nothing about it, so it
+    // would stay pinned against the edge, re-trigger the recenter on every
+    // subsequent sample, and pan would stall there. Re-seed from the real
+    // cursor whenever the two have diverged by more than a hardware delta
+    // could account for - that only happens when something warped it.
+    POINT realPt;
+    if (GetCursorPos(&realPt)) {
+        const QPointF realPos(realPt.x, realPt.y);
+        if ((realPos - m_rawCursorPos).manhattanLength() > kRawCursorResyncThresholdPx) {
+            m_rawCursorPos = realPos;
+        }
+    }
 
     // Consumed — prevent Qt generating a duplicate WM_MOUSEMOVE for this sample.
     return true;
