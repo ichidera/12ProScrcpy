@@ -1,23 +1,19 @@
 /*
- * fbstream5.c
+ * fbstream6.c
  *
- * The UBWC problem: modifier=0x500000000000001 means Qualcomm UBWC tiling.
- * CPU mmap gives us raw tile data, not linear pixels.
+ * Strategy: dump raw UBWC bytes from GPU memory as fast as possible.
+ * The PC receives and renders them. We also send a small header so the
+ * PC knows dimensions. No processing on phone at all.
  *
- * Solution: use Android's own ScreenCaptureClient via the screencap binary
- * which calls SurfaceFlinger::captureScreen() — this does the GPU-assisted
- * UBWC→linear conversion internally and returns raw RGBA pixels.
+ * We also add a "pixel probe" mode to test what the buffer actually
+ * contains when colorful content is on screen.
  *
- * We call screencap in a tight loop, reading its raw pixel output from a
- * pipe. screencap with no -p flag outputs:
- *   uint32_t width
- *   uint32_t height  
- *   uint32_t format  (RGBA=1, RGBX=2, etc)
- *   uint32_t padding
- *   then raw pixels
+ * Header per frame: 4 bytes magic + 4 bytes W + 4 bytes H + 4 bytes flags
+ * Then: raw bytes (pitch * height)
  *
- * This bypasses ADB entirely — pure local pipe, then TCP.
- * Latency is limited by SurfaceFlinger capture time (~8-16ms on this hw).
+ * On PC side we'll write a Python decoder that:
+ * 1. First tries to render as-is (maybe it IS linear)
+ * 2. If garbage, applies UBWC tile de-interleave
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,11 +22,38 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
-#include <sys/wait.h>
 #include <netinet/in.h>
 #include <time.h>
 #include <signal.h>
+
+#define DRM_IOCTL_BASE 'd'
+#define DRM_IOWR(nr,t) _IOWR(DRM_IOCTL_BASE,(nr),t)
+#define DRM_IOW(nr,t)  _IOW( DRM_IOCTL_BASE,(nr),t)
+
+struct drm_version {
+    int version_major, version_minor, version_patchlevel;
+    uint64_t name_len; uint64_t name;
+    uint64_t date_len; uint64_t date;
+    uint64_t desc_len; uint64_t desc;
+};
+struct drm_mode_get_plane {
+    uint32_t plane_id, crtc_id, fb_id, possible_crtcs, gamma_size, count_format_types;
+    uint64_t format_type_ptr;
+};
+struct drm_mode_fb_cmd2 {
+    uint32_t fb_id, width, height, pixel_format, flags;
+    uint32_t handles[4], pitches[4], offsets[4];
+    uint64_t modifier[4];
+};
+struct drm_prime_handle { uint32_t handle, flags; int32_t fd; };
+
+#define DRM_IOCTL_VERSION            DRM_IOWR(0x00, struct drm_version)
+#define DRM_IOCTL_MODE_GETPLANE      DRM_IOWR(0xB6, struct drm_mode_get_plane)
+#define DRM_IOCTL_MODE_GETFB2        DRM_IOWR(0xCE, struct drm_mode_fb_cmd2)
+#define DRM_IOCTL_PRIME_HANDLE_TO_FD DRM_IOWR(0x2d, struct drm_prime_handle)
 
 static int running = 1;
 static void sighandler(int s){ running=0; }
@@ -38,168 +61,121 @@ static long long now_ms(void){
     struct timespec ts; clock_gettime(CLOCK_MONOTONIC,&ts);
     return (long long)ts.tv_sec*1000+ts.tv_nsec/1000000;
 }
-
-/* Raw screencap header */
-struct sc_header {
-    uint32_t width;
-    uint32_t height;
-    uint32_t format;   /* 1=RGBA_8888, 2=RGBX_8888 */
-    uint32_t padding;
-};
-
-/* Read exactly n bytes from fd */
-static int readn(int fd, void *buf, size_t n) {
-    uint8_t *p = buf; size_t rem = n;
-    while (rem > 0) {
-        ssize_t r = read(fd, p, rem);
-        if (r <= 0) return -1;
-        p += r; rem -= r;
-    }
+static int writen(int fd, void *buf, size_t n){
+    uint8_t *p=buf; size_t r=n;
+    while(r>0){ ssize_t w=write(fd,p,r); if(w<=0) return -1; p+=w; r-=w; }
     return 0;
 }
 
-/* Write exactly n bytes to fd */
-static int writen(int fd, void *buf, size_t n) {
-    uint8_t *p = buf; size_t rem = n;
-    while (rem > 0) {
-        ssize_t r = write(fd, p, rem);
-        if (r <= 0) return -1;
-        p += r; rem -= r;
-    }
-    return 0;
-}
+#define MAGIC 0x46425354u  /* "FBST" */
 
-/* Capture one frame via screencap, write raw RGBA to out_fd.
-   Returns frame size in bytes, or -1 on error. */
-static ssize_t capture_frame(int out_fd, uint8_t *framebuf, size_t bufcap,
-                              uint32_t *W, uint32_t *H) {
-    int pfd[2];
-    if (pipe(pfd) < 0) { perror("pipe"); return -1; }
-
-    pid_t pid = fork();
-    if (pid < 0) { perror("fork"); close(pfd[0]); close(pfd[1]); return -1; }
-
-    if (pid == 0) {
-        /* child: screencap writes to pipe write-end */
-        close(pfd[0]);
-        dup2(pfd[1], STDOUT_FILENO);
-        close(pfd[1]);
-        /* screencap without -p → raw binary output */
-        execl("/system/bin/screencap", "screencap", NULL);
-        _exit(1);
-    }
-
-    close(pfd[1]);
-
-    /* Read header */
-    struct sc_header hdr;
-    if (readn(pfd[0], &hdr, sizeof(hdr)) < 0) {
-        waitpid(pid, NULL, 0); close(pfd[0]); return -1;
-    }
-    *W = hdr.width; *H = hdr.height;
-    size_t frame_sz = (size_t)hdr.width * hdr.height * 4;
-
-    if (frame_sz > bufcap) {
-        fprintf(stderr, "Frame too large: %zu > %zu\n", frame_sz, bufcap);
-        waitpid(pid, NULL, 0); close(pfd[0]); return -1;
-    }
-
-    /* Read pixels */
-    if (readn(pfd[0], framebuf, frame_sz) < 0) {
-        waitpid(pid, NULL, 0); close(pfd[0]); return -1;
-    }
-
-    close(pfd[0]);
-    waitpid(pid, NULL, 0);
-    return (ssize_t)frame_sz;
-}
-
-/* Alternative: use screencap via popen (simpler, avoids fork overhead) */
-static ssize_t capture_frame_popen(int out_fd, uint8_t *framebuf, size_t bufcap,
-                                    uint32_t *W, uint32_t *H) {
-    FILE *fp = popen("/system/bin/screencap 2>/dev/null", "r");
-    if (!fp) { perror("popen screencap"); return -1; }
-
-    struct sc_header hdr;
-    if (fread(&hdr, sizeof(hdr), 1, fp) != 1) { pclose(fp); return -1; }
-
-    *W = hdr.width; *H = hdr.height;
-    size_t frame_sz = (size_t)(*W) * (*H) * 4;
-
-    if (frame_sz > bufcap || frame_sz == 0) {
-        fprintf(stderr, "Bad frame: %ux%u sz=%zu\n", *W, *H, frame_sz);
-        pclose(fp); return -1;
-    }
-
-    if (fread(framebuf, 1, frame_sz, fp) != frame_sz) { pclose(fp); return -1; }
-    pclose(fp);
-    return (ssize_t)frame_sz;
-}
-
-int main(int argc, char **argv) {
+int main(int argc, char **argv){
     int port = argc>1 ? atoi(argv[1]) : 5005;
-    signal(SIGPIPE, SIG_IGN);
-    signal(SIGINT, sighandler);
-    signal(SIGTERM, sighandler);
+    int probe_mode = argc>2 && !strcmp(argv[2],"probe");
+    signal(SIGPIPE,SIG_IGN); signal(SIGINT,sighandler);
 
-    /* Test screencap once to get dimensions */
-    fprintf(stderr, "Testing screencap...\n");
-    size_t bufcap = 1440*3200*4 + 64;
-    uint8_t *framebuf = malloc(bufcap);
-    if (!framebuf) { fprintf(stderr,"OOM\n"); return 1; }
+    int fd = open("/dev/dri/card0", O_RDWR);
+    if(fd<0){perror("card0");return 1;}
 
-    uint32_t W=0, H=0;
-    ssize_t fsz = capture_frame_popen(-1, framebuf, bufcap, &W, &H);
-    if (fsz < 0) {
-        fprintf(stderr,"screencap failed, trying fork method...\n");
-        fsz = capture_frame(-1, framebuf, bufcap, &W, &H);
+    /* Get plane 126 (full-screen primary) */
+    uint32_t plane_ids[]={126,104,129,0};
+    uint32_t best_fb=0, W=0, H=0, pitch=0, gem=0;
+    uint64_t modifier=0;
+
+    for(int i=0; plane_ids[i]; i++){
+        uint32_t fmt[64]={0};
+        struct drm_mode_get_plane p={
+            .plane_id=plane_ids[i],
+            .format_type_ptr=(uint64_t)(uintptr_t)fmt
+        };
+        if(ioctl(fd,DRM_IOCTL_MODE_GETPLANE,&p)<0) continue;
+        if(!p.fb_id) continue;
+
+        struct drm_mode_fb_cmd2 fb={.fb_id=p.fb_id};
+        if(ioctl(fd,DRM_IOCTL_MODE_GETFB2,&fb)<0) continue;
+        if(fb.width*fb.height > W*H){
+            best_fb=p.fb_id; W=fb.width; H=fb.height;
+            pitch=fb.pitches[0]; gem=fb.handles[0];
+            modifier=fb.modifier[0];
+        }
     }
-    if (fsz < 0) { fprintf(stderr,"screencap unavailable\n"); free(framebuf); return 1; }
 
-    fprintf(stderr,"Screencap OK: %ux%u = %zd bytes\n", W, H, fsz);
-    fprintf(stderr,"First 8 pixels (RGBA):\n");
-    for(int i=0;i<8;i++)
-        fprintf(stderr,"  [%d] R=%02x G=%02x B=%02x A=%02x\n",
-                i, framebuf[i*4], framebuf[i*4+1],
-                framebuf[i*4+2], framebuf[i*4+3]);
+    if(!best_fb){fprintf(stderr,"No FB\n");return 1;}
+    if(!pitch) pitch=W*4;
+    fprintf(stderr,"FB %u: %ux%u pitch=%u mod=0x%llx gem=%u\n",
+            best_fb,W,H,pitch,(unsigned long long)modifier,gem);
+
+    /* PRIME → mmap */
+    struct drm_prime_handle ph={.handle=gem,.flags=0,.fd=-1};
+    if(ioctl(fd,DRM_IOCTL_PRIME_HANDLE_TO_FD,&ph)<0){
+        perror("PRIME");return 1;
+    }
+    int dma_fd=ph.fd;
+    size_t map_sz=(size_t)pitch*H;
+
+    void *map=mmap(NULL,map_sz,PROT_READ,MAP_SHARED,dma_fd,0);
+    if(map==MAP_FAILED){perror("mmap");return 1;}
+    fprintf(stderr,"mmap OK: %zu bytes\n",map_sz);
+
+    /* Probe mode: dump 256 bytes at different offsets */
+    if(probe_mode){
+        uint8_t *p=map;
+        size_t offsets[]={0, 4096, 16384, 65536, 
+                          map_sz/4, map_sz/2, map_sz*3/4, 0};
+        offsets[7]=map_sz-64;
+        fprintf(stderr,"\n=== PROBE MODE ===\n");
+        for(int i=0;i<8;i++){
+            fprintf(stderr,"Offset 0x%zx:\n  ",offsets[i]);
+            for(int j=0;j<32;j++)
+                fprintf(stderr,"%02x ",p[offsets[i]+j]);
+            fprintf(stderr,"\n");
+        }
+        fprintf(stderr,"=== END PROBE ===\n\n");
+    }
 
     /* TCP server */
-    int srv = socket(AF_INET, SOCK_STREAM, 0);
+    int srv=socket(AF_INET,SOCK_STREAM,0);
     int opt=1; setsockopt(srv,SOL_SOCKET,SO_REUSEADDR,&opt,sizeof(opt));
     struct sockaddr_in addr={
         .sin_family=AF_INET,.sin_port=htons(port),.sin_addr.s_addr=INADDR_ANY};
     bind(srv,(struct sockaddr*)&addr,sizeof(addr));
     listen(srv,1);
 
-    fprintf(stderr,"\nListening :%d\n",port);
-    fprintf(stderr,"ffplay -f rawvideo -pixel_format rgba "
-            "-video_size %ux%u -framerate 30 "
-            "-fflags nobuffer -flags low_delay "
-            "-framedrop tcp://PHONE_IP:%d\n\n", W, H, port);
+    /* Frame header layout (16 bytes):
+     *   u32 magic    = 0x46425354
+     *   u32 width
+     *   u32 height
+     *   u32 pitch
+     */
+    uint32_t hdr[4]={MAGIC, W, H, pitch};
 
-    while(running) {
-        int cli = accept(srv, NULL, NULL);
+    fprintf(stderr,"Listening :%d  raw UBWC stream\n",port);
+    fprintf(stderr,"Frame: %ux%u pitch=%u = %zu bytes/frame\n",W,H,pitch,map_sz);
+    fprintf(stderr,"\nPC decoder cmd:\n");
+    fprintf(stderr,"  python3 decode_ubwc.py --host PHONE_IP --port %d "
+            "--width %u --height %u --pitch %u\n\n",port,W,H,pitch);
+
+    while(running){
+        int cli=accept(srv,NULL,NULL);
         if(cli<0) break;
         fprintf(stderr,"Client connected\n");
         int nd=1; setsockopt(cli,6,1,&nd,sizeof(nd));
 
-        long long frames=0, t0=now_ms(), dropped=0;
-        while(running) {
-            uint32_t w=0,h=0;
-            ssize_t n = capture_frame_popen(-1, framebuf, bufcap, &w, &h);
-            if(n<0){ dropped++; continue; }
-
-            if(writen(cli, framebuf, (size_t)n)<0) break;
+        long long frames=0,t0=now_ms();
+        while(running){
+            /* Send header */
+            if(writen(cli,hdr,sizeof(hdr))<0) break;
+            /* Send raw frame — zero processing, maximum speed */
+            if(writen(cli,(void*)map,map_sz)<0) break;
             frames++;
-            if(frames%30==0){
-                long long elapsed=now_ms()-t0;
-                fprintf(stderr,"%.1f fps (dropped=%lld)\n",
-                        frames*1000.0/elapsed, dropped);
-            }
+            if(frames%60==0)
+                fprintf(stderr,"%.1f fps  %.1f MB/s\n",
+                        frames*1000.0/(now_ms()-t0),
+                        (double)frames*map_sz/1e6*1000.0/(now_ms()-t0));
         }
-        fprintf(stderr,"Disconnected frames=%lld dropped=%lld\n",frames,dropped);
+        fprintf(stderr,"Disconnected frames=%lld\n",frames);
         close(cli);
     }
-    free(framebuf);
+    munmap(map,map_sz); close(dma_fd); close(fd);
     return 0;
 }
