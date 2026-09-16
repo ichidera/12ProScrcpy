@@ -783,27 +783,27 @@ bool InputConvertGame::processMouseMove(const QMouseEvent *from)
 
 bool InputConvertGame::checkCursorPos(const QMouseEvent *from)
 {
-    bool moveCursor = false;
     QPoint pos = from->pos();
-    if (pos.x() < CURSOR_POS_CHECK) {
-        pos.setX(m_showSize.width() - CURSOR_POS_CHECK);
-        moveCursor = true;
-    } else if (pos.x() > m_showSize.width() - CURSOR_POS_CHECK) {
-        pos.setX(CURSOR_POS_CHECK);
-        moveCursor = true;
-    } else if (pos.y() < CURSOR_POS_CHECK) {
-        pos.setY(m_showSize.height() - CURSOR_POS_CHECK);
-        moveCursor = true;
-    } else if (pos.y() > m_showSize.height() - CURSOR_POS_CHECK) {
-        pos.setY(CURSOR_POS_CHECK);
-        moveCursor = true;
+    const bool nearEdge = pos.x() < CURSOR_POS_CHECK || pos.x() > m_showSize.width() - CURSOR_POS_CHECK || pos.y() < CURSOR_POS_CHECK
+                        || pos.y() > m_showSize.height() - CURSOR_POS_CHECK;
+    if (!nearEdge) {
+        return false;
     }
 
-    if (moveCursor) {
-        moveCursorTo(from, pos);
-    }
-
-    return moveCursor;
+    // Recenter to the MIDDLE of the display, not "jump to the opposite
+    // edge" (the old behavior: near the left edge, pos.setX(width - 50)
+    // sent it straight across to the right edge, and likewise for the
+    // other three edges - a literal screen wrap, and exactly the visible
+    // "went round the screen" jump this replaces). Every FPS engine's own
+    // mouse-look does the same thing this does: hide the cursor, and
+    // whenever it's drifted near a boundary, snap it back toward the
+    // center rather than to any edge - center-to-edge is a much smaller,
+    // expected correction, and is what a player is used to seeing (if
+    // they see anything at all - the cursor should be hidden while
+    // shoot-mode is on; a visible snap normally only shows up in a debug
+    // build's CrossCursor override in hideMouseCursor()).
+    moveCursorTo(from, QPoint(m_showSize.width() / 2, m_showSize.height() / 2));
+    return true;
 }
 
 void InputConvertGame::moveCursorTo(const QMouseEvent *from, const QPoint &localPosPixel)
