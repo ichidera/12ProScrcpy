@@ -19,6 +19,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <errno.h>
 #include <sys/ioctl.h>
 
 struct v4l2_capability {
@@ -54,7 +55,12 @@ int main(void){
         char path[64];
         snprintf(path, sizeof(path), "/dev/video%d", i);
         int fd = open(path, O_RDWR);
-        if(fd < 0) continue;
+        if(fd < 0){
+            if(errno != ENOENT)
+                fprintf(stderr, "%s: open failed: %s (errno=%d)\n",
+                        path, strerror(errno), errno);
+            continue;
+        }
 
         struct v4l2_capability cap = {0};
         if(ioctl(fd, VIDIOC_QUERYCAP, &cap) < 0){
