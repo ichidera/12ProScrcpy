@@ -261,10 +261,18 @@ void InputConvertGame::updateSize(const QSize &frameSize, const QSize &showSize)
 {
     if (showSize != m_showSize) {
         if (m_gameMap && m_keyMap.isValidMouseMoveMap()) {
-#ifdef QT_NO_DEBUG
-            // show size change, resize grab cursor
+            // show size change, resize grab cursor. Not gated to release
+            // builds: without this, the OS cursor is free to wander off
+            // the video widget the moment the window is resized while
+            // shoot-mode is engaged, and Qt stops delivering further
+            // mouse-move events to it at all once it does (only an
+            // actively-held button keeps events coming once the cursor
+            // leaves the widget) - pan would then silently stop working
+            // for anything but a click-and-drag gesture. That's exactly
+            // the same failure mode toggleCursorLock() guards against
+            // below, just triggered by a resize instead of the initial
+            // lock.
             emit grabCursor(true);
-#endif
         }
     }
     m_frameSize = frameSize;
@@ -863,9 +871,22 @@ void InputConvertGame::toggleCursorLock(bool lock)
     }
     m_cursorLocked = lock;
     qInfo() << QString("cursor lock: %1").arg(lock ? "on" : "off");
-#ifdef QT_NO_DEBUG
+    // Confines the OS cursor to the video widget (ClipCursor on Windows -
+    // see VideoForm::grabCursor()/WinMouseTap::enableMouseEventTap()) so
+    // Pan can track continuously from plain mouse movement. This used to
+    // be release-build only (#ifdef QT_NO_DEBUG), which meant a debug
+    // build never actually confined the cursor: it was free to leave the
+    // video widget on the very first unclicked mouse move, and Qt stops
+    // delivering mouse-move events to a widget once the cursor leaves it
+    // without a button held (an implicit grab from a held button is what
+    // keeps them coming past the edge) - so pan silently only worked while
+    // a button happened to be held, masking the real issue. Confinement
+    // now applies in both build types; the tradeoff is that a debug build
+    // will clip your mouse to the video window while shoot-mode is
+    // engaged, same as a release build always has - use the suspend key
+    // (or the lock-toggle key again) to get it back if you need to reach
+    // a debugger/IDE window.
     emit grabCursor(lock);
-#endif
     hideMouseCursor(lock);
 }
 
