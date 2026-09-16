@@ -52,7 +52,11 @@ void GameControlMarker::setNode(const ControlNode &node)
 
 void GameControlMarker::updateFireAnchorChild()
 {
-    const bool want = m_node.action == ControlActionKind::AimPanShoot && m_node.fireAnchorEnabled;
+    // Every AimPanShoot control has a fire icon - it's half the control,
+    // not an option. `pos` is where pan looks from, fireAnchorPos is where
+    // shooting happens; both are always live and always independently
+    // draggable.
+    const bool want = m_node.action == ControlActionKind::AimPanShoot;
     if (want && !m_fireAnchorChild) {
         m_fireAnchorChild = new GameControlMarker(m_node, parentWidget(), MarkerRole::FireAnchor, this);
         m_fireAnchorChild->setInteractive(m_interactive);
@@ -87,15 +91,9 @@ void GameControlMarker::requestEdit()
     emit editRequested(this);
 }
 
-void GameControlMarker::disableFireAnchor()
+void GameControlMarker::requestRemove()
 {
-    if (!m_fireAnchorChild) {
-        return;
-    }
-    m_node.fireAnchorEnabled = false;
-    updateFireAnchorChild();
-    update();
-    emit moved(this); // reuse the normal dirty-tracking path
+    emit removeRequested(this);
 }
 
 void GameControlMarker::setInteractive(bool interactive)
@@ -398,15 +396,20 @@ void GameControlMarker::contextMenuEvent(QContextMenuEvent *event)
         return;
     }
     if (m_role == MarkerRole::FireAnchor) {
-        // This child isn't registered with GameControlsEditor's marker
-        // list, so it can't go through the normal removeMarker() flow -
-        // "removing" it just means turning fireAnchorEnabled back off on
-        // the owner, which is what actually deletes this widget.
+        // The fire icon is half of the AimPanShoot control, not something
+        // that exists on its own, so both entries act on the owner: there
+        // is no "remove just the fire spot".
         QMenu menu(this);
-        QAction *removeAction = menu.addAction(tr("Remove fire spot"));
+        QAction *editAction = menu.addAction(tr("Edit..."));
+        QAction *removeAction = menu.addAction(tr("Remove Aim, Pan and Shoot"));
         QAction *chosen = menu.exec(event->globalPos());
-        if (chosen == removeAction && m_owner) {
-            m_owner->disableFireAnchor();
+        if (!m_owner) {
+            return;
+        }
+        if (chosen == editAction) {
+            m_owner->requestEdit();
+        } else if (chosen == removeAction) {
+            m_owner->requestRemove();
         }
         return;
     }

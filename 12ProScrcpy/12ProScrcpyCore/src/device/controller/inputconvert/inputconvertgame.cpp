@@ -725,7 +725,17 @@ bool InputConvertGame::processMouseMove(const QMouseEvent *from)
         QPointF distance    {distance_raw.x() / speedRatio.x(), distance_raw.y() / speedRatio.y()};
 
         mouseMoveStartTouch(from);
-        startMouseMoveTimer();
+        // The 500ms idle timer lifts the pan finger after a pause in
+        // movement. That's right for the transient free-look gesture, but
+        // wrong once shoot-mode is engaged: there the finger is supposed to
+        // stay planted for as long as the mode is on (toggleCursorLock()
+        // puts it down and takes it up), so a pause in mouse movement must
+        // not silently end the pan. Leaving the timer armed here is what
+        // made pan feel like it needed a button held - after any brief
+        // pause the finger was gone, and only a fresh drag brought it back.
+        if (!m_cursorLocked) {
+            startMouseMoveTimer();
+        }
 
         m_ctrlMouseMove.lastConverPos.setX(m_ctrlMouseMove.lastConverPos.x() + distance.x() / m_showSize.width());
         m_ctrlMouseMove.lastConverPos.setY(m_ctrlMouseMove.lastConverPos.y() + distance.y() / m_showSize.height());
@@ -740,6 +750,24 @@ bool InputConvertGame::processMouseMove(const QMouseEvent *from)
                     mouseMoveStartTouch(nullptr);
                     m_processMouseMove = true;
                 });
+            } else if (m_cursorLocked) {
+                // Shoot-mode: the synthetic finger has been dragged to the
+                // edge of the usable area and has to be re-planted back at
+                // the anchor to keep panning in the same direction. Do the
+                // same lift-then-immediately-replant the smallEyes path
+                // above does, instead of just lifting - dropping it here
+                // would end the pan mid-turn and leave nothing down until
+                // the next drag, which is precisely the "only works while
+                // I hold a button" symptom.
+                m_processMouseMove = false;
+                int delay = 30;
+                QTimer::singleShot(delay, this, [this]() { mouseMoveStopTouch(); });
+                QTimer::singleShot(delay * 2, this, [this]() {
+                    mouseMoveStartTouch(nullptr);
+                    m_processMouseMove = true;
+                });
+                m_ctrlMouseMove.ignoreCount = 5;
+                return true;
             } else {
                 mouseMoveStopTouch();
                 m_ctrlMouseMove.ignoreCount = 5;
@@ -888,6 +916,25 @@ void InputConvertGame::toggleCursorLock(bool lock)
     // a debugger/IDE window.
     emit grabCursor(lock);
     hideMouseCursor(lock);
+
+    // Put the pan finger down *immediately* on engage, rather than waiting
+    // for the first mouse-move to lazily start it (which is what
+    // processMouseMove() used to be solely responsible for). Engaging is
+    // the gesture: from this moment there is a finger held at the pan
+    // anchor that simply follows the cursor's deltas from there, exactly
+    // like a real thumb parked on the screen. Starting it lazily meant the
+    // very first movement after engaging was consumed establishing the
+    // touch instead of panning, and - worse - the anchor got re-established
+    // wherever the 500ms idle timer had last dropped it, so sensitivity
+    // felt inconsistent between the first flick and later ones. Releasing
+    // on disengage keeps the finger's lifetime exactly equal to shoot-mode's.
+    if (lock) {
+        m_ctrlMouseMove.lastPos = QPointF(0.0, 0.0); // no stale delta from before the lock
+        mouseMoveStartTouch(nullptr);
+    } else {
+        stopMouseMoveTimer();
+        mouseMoveStopTouch();
+    }
 }
 
 void InputConvertGame::handleSuspendKey(bool pressed)
@@ -923,8 +970,13 @@ void InputConvertGame::timerEvent(QTimerEvent *event)
 {
     if (m_ctrlMouseMove.timer == event->timerId()) {
         stopMouseMoveTimer();
-        // Don't auto-reset view when smallEyes mode is active
-        if (!m_ctrlMouseMove.smallEyes) {
+        // Don't auto-reset view when smallEyes mode is active, and never
+        // while shoot-mode is engaged - there the finger's lifetime belongs
+        // to toggleCursorLock(), not to an idle timeout. (Belt-and-braces:
+        // processMouseMove() already declines to arm the timer while
+        // locked, but the mode can be engaged while a timer armed by an
+        // earlier unlocked free-look is still pending.)
+        if (!m_ctrlMouseMove.smallEyes && !m_cursorLocked) {
             mouseMoveStopTouch();
         }
     }

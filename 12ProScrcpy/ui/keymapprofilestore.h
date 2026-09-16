@@ -59,19 +59,13 @@ struct ControlNode
     // AimPanShoot only.
     QString suspendKey;
 
-    // AimPanShoot only - matches BlueStacks' "Fire with left click" toggle
-    // plus its "place the fire icon on top of the in-game fire button"
-    // step. When false (default), the shoot button fires at the same spot
-    // `pos` uses for pan/look - one anchor doing double duty, same as
-    // before this field existed. When true, shoot instead fires at
-    // fireAnchorPos - a second, independently placed/dragged spot meant to
-    // sit on top of the game's own on-screen fire button - while pan keeps
-    // looking around from `pos`. The engine already runs these as two
-    // simultaneous, independent touches on separate multitouch slots (see
-    // InputConvertGame::processMouseClick() vs. processMouseMove()); this
-    // just lets the editor place the second one somewhere other than
-    // stacked on top of the first.
-    bool fireAnchorEnabled = false;
+    // AimPanShoot only - the "fire icon" you drag on top of the game's
+    // own on-screen fire button, exactly like BlueStacks'. Shoot always
+    // fires here, independently of and simultaneously with pan, which
+    // keeps looking around from `pos`. These are two separate touches on
+    // separate multitouch slots (see InputConvertGame::processMouseClick()
+    // vs. processMouseMove()), so holding the shoot button and dragging
+    // pans and fires at the same time rather than one stealing the other.
     QPointF fireAnchorPos = QPointF(0.62, 0.62);
 
     QString label; // shown on the marker/list; auto-filled if left empty

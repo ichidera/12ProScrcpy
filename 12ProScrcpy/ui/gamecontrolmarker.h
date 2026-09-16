@@ -16,10 +16,10 @@ public:
     enum class MarkerRole
     {
         Primary,   // the control's own anchor (node.pos) - every action kind
-        FireAnchor // AimPanShoot's independent "fire with left click" spot
-                   // (node.fireAnchorPos, BlueStacks calls it the "fire
-                   // icon") - only exists as a child of a Primary
-                   // AimPanShoot marker, only while node.fireAnchorEnabled.
+        FireAnchor // AimPanShoot's independent fire spot (node.fireAnchorPos,
+                   // BlueStacks calls it the "fire icon") - always present
+                   // as a child of a Primary AimPanShoot marker, meant to be
+                   // dragged onto the game's own on-screen fire button.
     };
 
     explicit GameControlMarker(const ControlNode &node, QWidget *parent = nullptr, MarkerRole role = MarkerRole::Primary,
@@ -46,11 +46,11 @@ public:
     void syncFireAnchorPos(QPointF normPos);
     void notifyMoved();
     void requestEdit();
-    // Turns fireAnchorEnabled back off and removes the child marker -
-    // reachable from the child's own right-click menu ("Remove fire spot"),
-    // since the child isn't registered with GameControlsEditor and so
-    // can't go through the normal removeMarker() flow.
-    void disableFireAnchor();
+    // The fire icon is half of the AimPanShoot control rather than an
+    // independent marker, so removing from its context menu removes the
+    // whole control via the owner - the child itself isn't registered with
+    // GameControlsEditor and can't go through removeMarker() on its own.
+    void requestRemove();
 
     // Used by the persistent "On-screen controls" display (see
     // GameControlsPanel): a non-interactive marker just shows where a
@@ -81,8 +81,9 @@ private:
     // already communicates the action type via shape.
     QString shortCaption() const;
     QColor badgeColor() const;
-    // Creates/destroys/updates the FireAnchor child to match
-    // m_node.fireAnchorEnabled. No-op unless this is a Primary marker.
+    // Creates/updates the FireAnchor child for an AimPanShoot node, and
+    // destroys it if the action changes to something else. No-op unless
+    // this is a Primary marker.
     void updateFireAnchorChild();
 
 private:
