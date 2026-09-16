@@ -104,6 +104,10 @@ def main():
     ap.add_argument('--autotune', action='store_true',
                      help='grab one frame, brute-force bank config against it, print the best guess, then exit')
     ap.add_argument('--save', help='Save first frame to PNG')
+    ap.add_argument('--save-raw', help='Save raw (undecoded) frame bytes to PREFIX_NNNN.bin, '
+                                        'for offline UBWC compression reverse-engineering')
+    ap.add_argument('--save-raw-count', type=int, default=1,
+                     help='how many frames to dump with --save-raw (default 1)')
     args = ap.parse_args()
 
     W, H, pitch = args.width, args.height, args.pitch
@@ -150,6 +154,15 @@ def main():
 
         fsz = fpitch * fh
         raw = recvn(sock, fsz)
+
+        if args.save_raw and frame_count < args.save_raw_count:
+            raw_path = f"{args.save_raw}_{frame_count:04d}.bin"
+            with open(raw_path, 'wb') as f:
+                # Header first (magic/w/h/pitch), then the exact raw payload,
+                # so a saved file is fully self-describing for later analysis.
+                f.write(hdr_raw)
+                f.write(raw)
+            print(f"Saved raw frame {frame_count} ({len(raw)} bytes payload) to {raw_path}")
 
         t_decode = time.time()
 
