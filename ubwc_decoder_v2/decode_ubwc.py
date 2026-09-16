@@ -163,6 +163,10 @@ def main():
                 f.write(hdr_raw)
                 f.write(raw)
             print(f"Saved raw frame {frame_count} ({len(raw)} bytes payload) to {raw_path}")
+            if frame_count + 1 >= args.save_raw_count:
+                print("--save-raw-count reached, closing connection (skip decode/display).")
+                sock.close()
+                return
 
         t_decode = time.time()
 
