@@ -79,14 +79,25 @@ int main(void){
         perror("GETRESOURCES (pass 1)"); return 1;
     }
 
-    uint32_t *conn_ids = calloc(res.count_connectors, sizeof(uint32_t));
+    /* The kernel expects every *_id_ptr to point at a buffer sized for the
+     * matching *_count from pass 1 -- a non-zero count with a null pointer
+     * is exactly what produced "Bad address" here. So we allocate arrays
+     * for all four lists, even though we only care about connectors. */
+    uint32_t *fb_ids   = calloc(res.count_fbs      ? res.count_fbs      : 1, sizeof(uint32_t));
+    uint32_t *crtc_ids = calloc(res.count_crtcs    ? res.count_crtcs    : 1, sizeof(uint32_t));
+    uint32_t *enc_ids  = calloc(res.count_encoders ? res.count_encoders : 1, sizeof(uint32_t));
+    uint32_t *conn_ids = calloc(res.count_connectors ? res.count_connectors : 1, sizeof(uint32_t));
+
+    res.fb_id_ptr        = (uint64_t)(uintptr_t)fb_ids;
+    res.crtc_id_ptr      = (uint64_t)(uintptr_t)crtc_ids;
+    res.encoder_id_ptr   = (uint64_t)(uintptr_t)enc_ids;
     res.connector_id_ptr = (uint64_t)(uintptr_t)conn_ids;
-    /* zero the other list pointers so the kernel doesn't try to write
-     * counts we don't care about into unallocated buffers */
-    res.fb_id_ptr = res.crtc_id_ptr = res.encoder_id_ptr = 0;
+
     if(ioctl(fd, DRM_IOCTL_MODE_GETRESOURCES, &res) < 0){
         perror("GETRESOURCES (pass 2)"); return 1;
     }
+
+    free(fb_ids); free(crtc_ids); free(enc_ids);
 
     fprintf(stderr, "Found %u connectors on card0\n\n", res.count_connectors);
 
