@@ -25,7 +25,7 @@ import sys
 import numpy as np
 
 from ubwc_tiling import (
-    compute_meta_plane_size, get_block_size, block_x_xormask,
+    compute_meta_plane_size, meta_grid, get_block_size, block_x_xormask,
     block_y_xormask, get_bank_mask, get_bank_shift, get_pixel_offset,
     MACROTILE_8_CHANNEL,
 )
@@ -42,16 +42,6 @@ def load_capture(path):
               f"-- file may not be a decode_ubwc.py --save-raw dump", file=sys.stderr)
     payload = np.frombuffer(data[16:], dtype=np.uint8)
     return w, h, pitch, payload
-
-
-def meta_grid(payload, w, h, cpp):
-    meta_size, meta_pitch, meta_height = compute_meta_plane_size(w, h, cpp)
-    block_width, block_height = get_block_size(cpp)
-    blocks_w = (w + block_width - 1) // block_width
-    blocks_h = (h + block_height - 1) // block_height
-    meta = payload[:meta_size].reshape(meta_height, meta_pitch)
-    # only the top-left blocks_h x blocks_w corner is real data, the rest is padding
-    return meta[:blocks_h, :blocks_w], meta_size
 
 
 def block_byte_offset(x_block, y_block, pitch, cpp, hbb, levels, mode):

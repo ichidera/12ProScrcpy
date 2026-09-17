@@ -101,6 +101,32 @@ def compute_meta_plane_size(width: int, height: int, cpp: int, r8g8: bool = Fals
     return meta_size, meta_pitch, meta_height
 
 
+def meta_grid(payload: np.ndarray, width: int, height: int, cpp: int, r8g8: bool = False):
+    """
+    Slices the meta plane out of a raw capture payload and reshapes it to
+    (blocks_h, blocks_w), trimmed to just the real (non-padding) region.
+    Returns (grid, meta_size).
+    """
+    meta_size, meta_pitch, meta_height = compute_meta_plane_size(width, height, cpp, r8g8)
+    block_width, block_height = get_block_size(cpp, r8g8)
+    blocks_w = (width + block_width - 1) // block_width
+    blocks_h = (height + block_height - 1) // block_height
+    meta = payload[:meta_size].reshape(meta_height, meta_pitch)
+    return meta[:blocks_h, :blocks_w], meta_size
+
+
+# ---------------------------------------------------------------------------
+# Empirically-determined special-case meta codes (see CHANGELOG v2.6.0/2.7.0).
+# These were NOT in any provided source -- they're reverse-engineered from
+# controlled on-device test patterns (solid black/white vs. every other flat
+# color). Confirmed deterministic across 11 test colors: 0x05 appeared ONLY
+# for exact solid black, 0x0d ONLY for exact solid white, every other flat
+# color (including near-black/near-white grays) uses the generic 0x11 code.
+# ---------------------------------------------------------------------------
+META_ALL_ZERO = 0x05   # entire block is literal 0x00 bytes
+META_ALL_FF = 0x0D     # entire block is literal 0xFF bytes
+
+
 # ---------------------------------------------------------------------------
 # get_pixel_offset()  (fd6_tiled_memcpy.cc, verbatim translation)
 # ---------------------------------------------------------------------------
@@ -193,11 +219,17 @@ def ubwc_detile(color_plane: np.ndarray, width: int, height: int, pitch: int,
                  cpp: int = 4, highest_bank_bit: int = 15,
                  bank_swizzle_levels: int = 0x7,
                  macrotile_mode: str = MACROTILE_8_CHANNEL,
-                 is_r8g8: bool = False) -> np.ndarray:
+                 is_r8g8: bool = False,
+                 meta: np.ndarray = None) -> np.ndarray:
     """
     color_plane: flat uint8 array containing ONLY the tiled color plane
                  (i.e. with the UBWC meta/flag plane already sliced off
                  the front — see compute_meta_plane_size()).
+    meta: optional (blocks_h, blocks_w) array from meta_grid(). When given,
+          blocks whose meta byte is META_ALL_ZERO or META_ALL_FF are
+          overridden to literal 0x00 / 0xFF — these two codes are
+          empirically confirmed exact (see CHANGELOG v2.6.0/2.7.0), unlike
+          the generic address-only decode used for every other code.
     Returns an (height, width, cpp) uint8 array in normal row-major order.
     """
     block_width, block_height = get_block_size(cpp, is_r8g8)
@@ -236,6 +268,16 @@ def ubwc_detile(color_plane: np.ndarray, width: int, height: int, pitch: int,
 
     idx = total_offset[..., None] + np.arange(cpp, dtype=np.int64)
     out = color_plane[idx]
+
+    if meta is not None:
+        # Broadcast each pixel's block meta value up to per-pixel resolution
+        # via the same x_block/y_block index arrays used for addressing.
+        pixel_meta = meta[y_block[:, None], x_block[None, :]]  # (H, W)
+        zero_mask = pixel_meta == META_ALL_ZERO
+        ff_mask = pixel_meta == META_ALL_FF
+        out[zero_mask] = 0
+        out[ff_mask] = 255
+
     return out
 
 

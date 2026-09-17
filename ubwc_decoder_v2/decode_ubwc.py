@@ -24,7 +24,7 @@ v2 changes (see CHANGELOG.md):
 import socket, struct, sys, time, argparse, os
 import numpy as np
 
-from ubwc_tiling import compute_meta_plane_size, ubwc_detile, autotune_bank_config, \
+from ubwc_tiling import compute_meta_plane_size, meta_grid, ubwc_detile, autotune_bank_config, \
     MACROTILE_4_CHANNEL, MACROTILE_8_CHANNEL
 
 try:
@@ -69,8 +69,8 @@ def looks_valid(frame: np.ndarray) -> bool:
 
 def decode_frame(raw: bytes, W: int, H: int, pitch: int, args) -> np.ndarray:
     """Slice off the UBWC meta plane, then run the real detile on the rest."""
-    meta_size, meta_pitch, meta_height = compute_meta_plane_size(W, H, args.cpp)
     color_bytes = np.frombuffer(raw, dtype=np.uint8)
+    meta, meta_size = meta_grid(color_bytes, W, H, args.cpp)
     if len(color_bytes) <= meta_size:
         raise ValueError(
             f"frame ({len(color_bytes)} bytes) is smaller than the computed "
@@ -82,6 +82,7 @@ def decode_frame(raw: bytes, W: int, H: int, pitch: int, args) -> np.ndarray:
         highest_bank_bit=args.highest_bank_bit,
         bank_swizzle_levels=args.bank_swizzle_levels,
         macrotile_mode=args.macrotile_mode,
+        meta=meta,
     )
 
 
