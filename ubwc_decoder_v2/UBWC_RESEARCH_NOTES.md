@@ -414,35 +414,118 @@ there's no way to tell which byte holds which *specific* channel (R vs G
 vs B), or where the exponent bits live, from this data alone. See the new
 test patterns requested below.
 
+**UPDATE -- this hypothesis is FALSIFIED, see §7.5.** The follow-up
+captures (`rgb_200_100_50`, `red160`, `red224`) broke it immediately:
+`red160` (160,0,0) predicts `byte0>>3 = 160 mod 32 = 0` but the actual
+byte is `0x46` → `byte0>>3 = 8`. `rgb_200_100_50` similarly mismatches
+(predicted 8, actual 16). The "OK" cases above were **all** either
+R=G=B (gray) or saturated-to-255 colors, both of which are degenerate
+for this specific (wrong) formula in ways that a genuinely asymmetric
+color exposes. Left in place as a record of a plausible-looking dead end
+-- the real field boundaries are in §7.5, found by brute-force bit-field
+search across all 14 colors instead of hand-picking byte-aligned
+candidates.
+
+### 7.5 Confirmed: the header is YCoCg-R, bit-packed across byte boundaries
+
+The fix that broke the loop in §7.4 was to stop guessing byte-aligned
+fields by eye and instead treat the whole 7-byte non-zero header as one
+56-bit little-endian bitstream, then brute-force every `(start_bit,
+width)` window against several color-derived candidates (`R`, `G`, `B`,
+`max`, `min`, `sum`, channel differences, and the reversible YCoCg-R
+transform from §7.1's patent lead: `Co = R-B`; `tmp = B + (Co>>1)`;
+`Cg = G - tmp`; `Y = tmp + (Cg>>1)`, each mod 256), across all 14 known
+colors (6 saturated primaries, 3 grays, 3 mod-32-probing reds/grays, plus
+`rgb_200_100_50` for a fully asymmetric color) at once. Looking for
+*exact* equality (`field == target mod 2^width`), not just correlation,
+is what surfaced this -- Pearson correlation misses modular wraparound
+(e.g. `Cg` values like 254,255,0,1,2 look uncorrelated to a linear metric
+despite an exact modular relationship), which is almost certainly why
+the direct Cg/Y search under §7.4's approach came up empty.
+
+**Confirmed, bit-exact across all 14 colors, header bits numbered 0 =
+LSB of byte0:**
+
+| bits | width | field | notes |
+|---|---|---|---|
+| 0-2 | 3 | constant `0b110` (=6) | fixed tag, not color data |
+| 3-8 | 6 | `Y mod 64` | Y per the YCoCg-R formula above |
+| 9-10 | 2 | **unexplained** | doesn't match `Y>>6` or anything else tried |
+| 11-18 | 8 | `Co mod 256` | full 8-bit precision, no truncation |
+| 19 | 1 | **unexplained** | doesn't match `Cg>>7` (12/14 rows only) |
+| 20-26 | 7 | `Cg mod 128` | |
+| 27 | 1 | **close but not exact** | matches `Cg>>7` on 12/14 rows; blue and cyan break it |
+| 28-55 | — | constant across all 14 captures (`1f 63 0c` etc.) | not color data at this block; may matter for non-flat blocks |
+
+`Co` fits perfectly at full 8-bit width with zero exceptions across all
+14 colors -- that field is solid. `Y` and `Cg` are real (their low bits
+match exactly and the fit is too precise across 14 diverse colors to be
+coincidence) but each is missing something for its top bit(s):
+
+- `Y`'s top 2 bits (`Y>>6`) aren't in bits 9-10, or anywhere else found
+  by the same search.
+- `Cg`'s top bit (`Cg>>7`) *almost* lines up with bit 27, but blue
+  `(0,0,255)` and cyan `(0,255,255)` break it -- both have `Cg=1` (should
+  give `Cg>>7=0`) but bit27 reads `1` for both.
+
+**Most likely explanation:** the hardware's actual reversible transform
+uses a slightly different rounding/bias convention than the textbook
+YCoCg-R formula above (many reversible color transforms, e.g. JPEG2000's
+RCT, add a parity-dependent `+1` correction in the `tmp`/`Cg` steps
+specifically to make the transform exactly invertible in integer math --
+we may be missing exactly that kind of term). This would explain why the
+low-order bits match exactly (least sensitive to a small formula
+difference) while the top bit(s) don't. Genuinely open, not something to
+guess further at without more data -- see below.
+
+**Next capture set to resolve this:** a grayscale ramp forces
+`Co = Cg = 0` for every sample (since `R=G=B`), which completely removes
+`Co`/`Cg` from the picture and isolates `Y` across its full 0-255 range
+with fine granularity -- exactly what's needed to find where `Y`'s top 2
+bits live (or confirm they're genuinely not stored, which would itself
+be a real finding about the codec's precision budget for flat luma).
+Patterns needed (solid fills): `gray32`, `gray48`, `gray64`, `gray80`,
+`gray176`, `gray192`, `gray208` -- filling in the steps our existing
+gray set (10, 96, 128, 224, 245) doesn't cover, especially around
+multiples of 64 where a 6-bit field would wrap.
+
+Separately, to pin down `Cg`'s top bit and the two still-fully-unexplained
+bits (9-10, 19), a set of colors with `G` stepped independently while
+`R`/`B` stay fixed (so `Co` stays constant and only `Cg` sweeps) would
+isolate that field the same way the gray ramp isolates `Y`.
+
 ---
 
 ## 8. Open questions / next steps
 
 1. **Crack the generic `0x11` code.** This is the majority of real
    content and the highest-value remaining target.
-   **Progress (§7.4):** `byte0`'s upper 5 bits = `max(R,G,B) mod 32`,
-   confirmed bit-exact across 9 solid colors. A 3-bit exponent
-   (`max_channel >> 5`) must exist elsewhere in the block (not bytes 4-6)
-   but isn't located yet, and channel-to-byte assignment (which byte
-   holds R vs G vs B) is still unknown because every captured color so
-   far has tied/repeated channels.
+   **Progress (§7.5, supersedes the falsified §7.4 hypothesis):** the
+   header is confirmed to be a reversible YCoCg-R encoding, bit-packed
+   across byte boundaries (not byte-aligned, which is why the original
+   byte-by-byte guessing in §7.4 failed). Solid: 3-bit constant tag
+   (bits 0-2), `Y mod 64` (bits 3-8), full 8-bit `Co` (bits 11-18),
+   `Cg mod 128` (bits 20-26) -- all bit-exact across 14 known colors.
+   Not yet solid: bits 9-10, bit 19 (fully unexplained), and bit 27
+   (matches `Cg`'s top bit on 12/14 colors, breaks on blue and cyan) --
+   most likely a rounding/bias term in the real transform that differs
+   from the textbook YCoCg-R formula used to fit this.
    **Next captures needed** (solid-fill patterns, same capture procedure
-   as §9): three distinct, non-tied channel values and colors chosen to
-   separate "value mod 32" from "value div 32" --
-   - `rgb_200_100_50` — fill `#c86432` (200,100,50): distinct channels,
-     to find which byte holds which channel.
-   - `red160` — fill `#a00000` (160,0,0) and `red224` — fill `#e00000`
-     (224,0,0): both have `mod 32 = 0` like gray128's max channel, but
-     different high bits (5 vs 7 vs gray128's 4) — isolates where the
-     exponent lives.
-   - `gray96` — fill `#606060` (96,96,96) and `gray224` — fill `#e0e0e0`
-     (224,224,224): two more mod-32-varying grays to firm up the fit.
+   as §9):
+   - A finer grayscale ramp -- `gray32`, `gray48`, `gray64`, `gray80`,
+     `gray176`, `gray192`, `gray208` -- to isolate `Y` across its full
+     range with `Co=Cg=0` guaranteed, and find where (or whether) `Y`'s
+     top 2 bits are stored.
+   - Colors with `G` swept while `R`/`B` stay fixed (holds `Co` constant,
+     sweeps only `Cg`) to pin down `Cg`'s top bit and bit 19.
 
    Separately, still needs test patterns with controlled *non-flat*
    content at sub-block granularity (the `pattern_stripes_fine.html` 2px-
    stripe pattern was a start, but hasn't been analyzed in detail yet) --
-   do the solid-color exponent/channel-assignment work above first, since
-   it's a cleaner signal.
+   finish the flat-color transform first, since a fully solved YCoCg-R
+   decode for flat blocks is very likely to transfer directly to the
+   non-flat case (probably the same Y/Co/Cg fields per finer sub-block,
+   just with per-pixel deltas layered on top instead of one shared value).
 2. **Characterize `0x13`/`0x15`/`0x17`.** Hypothesis: escalating
    "complexity tiers" (more distinct values / wider range within the
    block needing progressively more storage), but unconfirmed. Look at
