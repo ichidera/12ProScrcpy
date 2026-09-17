@@ -111,7 +111,11 @@ def meta_grid(payload: np.ndarray, width: int, height: int, cpp: int, r8g8: bool
     block_width, block_height = get_block_size(cpp, r8g8)
     blocks_w = (width + block_width - 1) // block_width
     blocks_h = (height + block_height - 1) // block_height
-    meta = payload[:meta_size].reshape(meta_height, meta_pitch)
+    # meta_size is meta_pitch*meta_height padded up to a 4K boundary (the
+    # padding is real space in the buffer, but it isn't part of the
+    # meta_height x meta_pitch grid) -- reshape only the unpadded region,
+    # then use meta_size (the padded value) as the color-plane start offset.
+    meta = payload[:meta_pitch * meta_height].reshape(meta_height, meta_pitch)
     return meta[:blocks_h, :blocks_w], meta_size
 
 
