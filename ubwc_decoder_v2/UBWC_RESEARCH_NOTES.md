@@ -92,6 +92,17 @@ compare_captures.py       Diffs meta-byte grids across N captures at once — is
 probe_writeback.c         Phone-side: checks for a DRM writeback connector (§4)
 probe_v4l2.c              Phone-side: identifies /dev/videoN nodes via VIIOC_QUERYCAP (§4)
 
+analyze_block_headers.py  Cracking-the-0x11-code tool (§7.4). Extracts the TRUE
+                          contiguous 256-byte record for every block tagged with
+                          a given meta code (default 0x11) -- not the pixel-
+                          swizzled view decode_ubwc.py uses for display -- and
+                          aggregates/correlates the leading "header" bytes
+                          against known solid fill colors. Supports --known
+                          path=R,G,B,A for multi-capture correlation, and
+                          --block-xy X Y --dump-full for a single full block
+                          dump. Depends on a corrected ubwc_tiling.meta_grid()
+                          (see the fix note under §5.1).
+
 patterns/*.html           Controlled test content (solid colors, gradients, stripes)
                           served over HTTP from the PC and opened in Chrome on the
                           phone, for the empirical reverse-engineering loop (§7)
@@ -207,6 +218,17 @@ comes out to **77,824 bytes**, which matches the probe dump boundary
 exactly (repeating meta-style bytes out to that offset, real-looking pixel
 bytes after). Treat this formula as "best available from what we have,"
 not a byte-exact copy of vendor code.
+
+**Latent bug, fixed:** `meta_grid()` originally reshaped
+`payload[:meta_size]` (the 4K-*padded* size) into a `(meta_height,
+meta_pitch)` array, which only works when `meta_pitch * meta_height` is
+itself already a multiple of 4096 -- true for this device's 1088x2400
+buffer (128 x 608 = 77,824, exactly 19 x 4096) by coincidence, so it never
+surfaced here, but it will throw a reshape error on other resolutions.
+Fixed to reshape only `payload[:meta_pitch*meta_height]` and keep
+`meta_size` (the padded value) as the color-plane start offset. Doesn't
+change any result for this device's captures, just makes the code
+resolution-independent.
 
 ### 5.2 Per-SoC bank config — found via brute force, not derived
 
@@ -329,17 +351,98 @@ positionally with the real icon grid columns in the reference screenshot
 — i.e. it's content-correlated noise from the unsolved generic codes, not
 a new addressing bug.
 
+### 7.4 First confirmed bit-exact field inside the generic 0x11 code
+
+**Method change first, since it mattered more than expected.** The first
+approach was to average header bytes across *all* 0x11 blocks in a
+capture and compare that average across differently-colored captures.
+This produced flat, uninformative means (e.g. `byte[0]` mean ~98 in
+*every* capture regardless of displayed color) and looked like a dead
+end. It wasn't one -- the averaging was hiding the signal:
+
+- ~50-54% of 0x11 blocks in every capture have a **literal all-zero**
+  12-byte header (`00 00 00 00 00 00 00 00 00 00 00 00`). Not yet
+  understood; possibly a distinct sub-case that should have its own code
+  but doesn't, possibly padding/off-screen area. Not color-driven.
+- A handful of *specific, byte-identical* headers (e.g.
+  `d6 df c7 ef 1f 63 0c 00 00 00 00 00`, count exactly 781; and
+  `56 b7 a7 ef 1f 63 0c 00 00 00 00 00`, count exactly 65) appear in
+  **every single capture regardless of test color** -- checker, all six
+  saturated primaries, black, white. These are fixed screen chrome
+  (status bar / nav bar / browser UI) that's pixel-identical across every
+  test page. Also not color-driven, by construction.
+- Only **one** remaining header pattern per capture actually varies with
+  color, and its block count tracks the fill area: ~359 blocks for the
+  six saturated primaries, ~374 for the three grays, only ~15 for
+  checker/black/white (expected -- literal black/white fills mostly hit
+  the already-solved `0x05`/`0x0d` codes instead of `0x11`, so only
+  antialiased/boundary blocks are left over).
+
+**Lesson for future analysis passes:** never average blindly across all
+blocks of a code. First split off (a) all-zero headers, and (b) headers
+that are byte-identical across captures with different displayed colors
+(fixed chrome) -- only what's left is a content signal.
+
+**The confirmed field**, from the isolated content-region header across
+9 known solid colors (6 saturated primaries + gray128 + darkgray10 +
+lightgray245):
+
+| color | max(R,G,B) | max mod 32 | byte0 (hex) | byte0 >> 3 |
+|---|---|---|---|---|
+| red/green/blue/cyan/magenta/yellow | 255 | 31 | `0xfe` | 31 |
+| gray128 | 128 | 0 | `0x06` | 0 |
+| darkgray10 | 10 | 10 | `0x56` | 10 |
+| lightgray245 | 245 | 21 | `0xae` | 21 |
+
+**`byte0`'s upper 5 bits = `max(R,G,B) mod 32`, bit-exact across all 9
+data points.** `byte0`'s lower 3 bits are a constant `0b110` (=6) in
+every case -- a fixed tag, not color data.
+
+Working hypothesis: a shared-exponent / anchor-channel encoding. The
+5-bit field can't by itself distinguish e.g. 128 from 0/32/64/96/160/
+192/224 -- there must be a 3-bit "exponent" (`max_channel >> 5`, range
+0-7) stored *somewhere else* in the block to disambiguate. It is **not**
+in bytes 4-6 (`1f 63 0c`), which stay constant across colors with
+different exponents (255→7, 128→4, 10→0, 245→7) -- so it must be folded
+into bytes 1-3, likely interleaved with whatever encodes the other two
+channels. Not yet located.
+
+**Why this couldn't be pinned down further with the data on hand:** every
+color captured so far is degenerate for this purpose -- the six
+primaries and three grays all have tied or repeated channel values, so
+there's no way to tell which byte holds which *specific* channel (R vs G
+vs B), or where the exponent bits live, from this data alone. See the new
+test patterns requested below.
+
 ---
 
 ## 8. Open questions / next steps
 
 1. **Crack the generic `0x11` code.** This is the majority of real
-   content and the highest-value remaining target. No data yet beyond
-   "it's not one of the two trivial cases." Needs test patterns with
-   controlled *non-flat* content at sub-block granularity (the
-   `pattern_stripes_fine.html` 2px-stripe pattern was a start, but hasn't
-   been analyzed in detail yet — do that next before designing further
-   patterns).
+   content and the highest-value remaining target.
+   **Progress (§7.4):** `byte0`'s upper 5 bits = `max(R,G,B) mod 32`,
+   confirmed bit-exact across 9 solid colors. A 3-bit exponent
+   (`max_channel >> 5`) must exist elsewhere in the block (not bytes 4-6)
+   but isn't located yet, and channel-to-byte assignment (which byte
+   holds R vs G vs B) is still unknown because every captured color so
+   far has tied/repeated channels.
+   **Next captures needed** (solid-fill patterns, same capture procedure
+   as §9): three distinct, non-tied channel values and colors chosen to
+   separate "value mod 32" from "value div 32" --
+   - `rgb_200_100_50` — fill `#c86432` (200,100,50): distinct channels,
+     to find which byte holds which channel.
+   - `red160` — fill `#a00000` (160,0,0) and `red224` — fill `#e00000`
+     (224,0,0): both have `mod 32 = 0` like gray128's max channel, but
+     different high bits (5 vs 7 vs gray128's 4) — isolates where the
+     exponent lives.
+   - `gray96` — fill `#606060` (96,96,96) and `gray224` — fill `#e0e0e0`
+     (224,224,224): two more mod-32-varying grays to firm up the fit.
+
+   Separately, still needs test patterns with controlled *non-flat*
+   content at sub-block granularity (the `pattern_stripes_fine.html` 2px-
+   stripe pattern was a start, but hasn't been analyzed in detail yet) --
+   do the solid-color exponent/channel-assignment work above first, since
+   it's a cleaner signal.
 2. **Characterize `0x13`/`0x15`/`0x17`.** Hypothesis: escalating
    "complexity tiers" (more distinct values / wider range within the
    block needing progressively more storage), but unconfirmed. Look at
