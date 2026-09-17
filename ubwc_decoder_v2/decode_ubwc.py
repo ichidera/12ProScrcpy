@@ -21,7 +21,7 @@ v2 changes (see CHANGELOG.md):
   * Added --autotune, which grabs one frame, brute-forces the bank config
     against it, and prints the best guess (see ubwc_tiling.autotune_bank_config).
 """
-import socket, struct, sys, time, argparse
+import socket, struct, sys, time, argparse, os
 import numpy as np
 
 from ubwc_tiling import compute_meta_plane_size, ubwc_detile, autotune_bank_config, \
@@ -114,6 +114,11 @@ def main():
     frame_bytes = pitch * H
     print(f"Connecting to {args.host}:{args.port}")
     print(f"Frame: {W}x{H} pitch={pitch} = {frame_bytes/1e6:.1f} MB/frame")
+
+    if args.save_raw:
+        raw_dir = os.path.dirname(args.save_raw)
+        if raw_dir:
+            os.makedirs(raw_dir, exist_ok=True)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.connect((args.host, args.port))
