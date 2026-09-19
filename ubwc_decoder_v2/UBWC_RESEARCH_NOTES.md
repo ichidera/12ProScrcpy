@@ -494,30 +494,100 @@ bits (9-10, 19), a set of colors with `G` stepped independently while
 `R`/`B` stay fixed (so `Co` stays constant and only `Cg` sweeps) would
 isolate that field the same way the gray ramp isolates `Y`.
 
+### 7.6 Tooling upgrade + a black/white gotcha the larger dataset exposed
+
+`analyze_block_headers.py` now automates what §7.4/7.5 did by hand:
+`isolate_content_headers()` auto-picks each capture's content-region
+header (skipping all-zero and fixed-chrome headers), and
+`--bitfield-search` runs the brute-force `(start_bit, width)` search
+against `R`/`G`/`B`/`Y`/`Co`/`Cg` automatically. Reads colors from a
+`--known-file` (one `path=R,G,B,A` per line) instead of a huge flag list.
+See `colors.txt` for the full 29-color list used below.
+
+Running the automated search against all 29 known colors (the 14 from
+§7.5 plus the 7-step gray ramp and 6-step G-sweep from the "next
+captures" list above) reproduced `Co` and `Cg` exactly, but **broke the
+previously-exact `Y mod 64` field** -- 2 mismatches appeared. Tracked
+down to `black_0000.bin` and `white_0000.bin` specifically: both have an
+auto-isolated content-header block count of only 15, versus 359-374 for
+every other capture. That's the same "boundary/antialiased leftover"
+population described in §7.4's third bullet -- for solid black or white
+fills, nearly the entire screen lands on the already-solved exact
+`0x05`/`0x0d` codes (as expected -- that's what those codes are *for*),
+leaving only a handful of non-representative edge/AA `0x11` blocks whose
+true pixel content isn't actually pure black or white. Feeding those into
+a color correlation was always going to look wrong; it wasn't testing
+what it looked like it was testing. Excluding just those two brings `Y
+mod 64` back to a clean exact match across the remaining 27 colors.
+
+**Fixed properly, not just noted:** `isolate_content_headers()` now flags
+any capture whose content-header count is below 30% of the batch median
+as `low_confidence`, and `--bitfield-search` excludes flagged captures by
+default (`--include-low-confidence` to override). Confirmed against a
+synthetic capture reproducing this exact black/white failure mode -- the
+tool now catches it automatically instead of requiring a human to notice
+a field silently degrade when the color set grows.
+
+**Grayscale ramp result:** with black/white correctly excluded, `Y mod
+64` holds exactly across the full 27-color set including all 7 new ramp
+grays (32/48/64/80/176/192/208) and the `gsweep` G-sweep colors -- but
+this *only* confirms the low 6 bits over that range. **`Y`'s top 2 bits
+are still not located** (no exact bit-field match found anywhere in the
+header for `Y>>6` in this pass, including the position that would be the
+natural continuation, bits 9-10). Same status as before for `Cg`'s top
+bit (bit 27 near-match, 2 exceptions) and bits 9/19 (still fully
+unexplained) -- the larger dataset didn't move these, so they likely need
+a different kind of test pattern (see §8) rather than more solid colors
+of the same kind.
+
 ---
 
 ## 8. Open questions / next steps
 
 1. **Crack the generic `0x11` code.** This is the majority of real
    content and the highest-value remaining target.
-   **Progress (§7.5, supersedes the falsified §7.4 hypothesis):** the
+   **Progress (§7.5-7.6, supersedes the falsified §7.4 hypothesis):** the
    header is confirmed to be a reversible YCoCg-R encoding, bit-packed
    across byte boundaries (not byte-aligned, which is why the original
-   byte-by-byte guessing in §7.4 failed). Solid: 3-bit constant tag
-   (bits 0-2), `Y mod 64` (bits 3-8), full 8-bit `Co` (bits 11-18),
-   `Cg mod 128` (bits 20-26) -- all bit-exact across 14 known colors.
-   Not yet solid: bits 9-10, bit 19 (fully unexplained), and bit 27
-   (matches `Cg`'s top bit on 12/14 colors, breaks on blue and cyan) --
-   most likely a rounding/bias term in the real transform that differs
-   from the textbook YCoCg-R formula used to fit this.
-   **Next captures needed** (solid-fill patterns, same capture procedure
-   as §9):
-   - A finer grayscale ramp -- `gray32`, `gray48`, `gray64`, `gray80`,
-     `gray176`, `gray192`, `gray208` -- to isolate `Y` across its full
-     range with `Co=Cg=0` guaranteed, and find where (or whether) `Y`'s
-     top 2 bits are stored.
-   - Colors with `G` swept while `R`/`B` stay fixed (holds `Co` constant,
-     sweeps only `Cg`) to pin down `Cg`'s top bit and bit 19.
+   byte-by-byte guessing in §7.4 failed). Confirmed across 27 known solid
+   colors (excludes `black`/`white` -- see §7.6 for why those two are
+   structurally unusable for this): 3-bit constant tag (bits 0-2), `Y mod
+   64` (bits 3-8), full 8-bit `Co` (bits 11-18), `Cg mod 128` (bits
+   20-26). Not yet solid: bits 9-10, bit 19 (fully unexplained), and
+   `Y`/`Cg`'s missing top bit(s) -- the gray ramp and G-sweep captures
+   didn't move these, so they need a different kind of test pattern, not
+   more solid colors of the same shape.
+   **Tooling:** `analyze_block_headers.py --known-file colors.txt
+   --bitfield-search` now automates the whole isolate-header +
+   brute-force-search pipeline that used to be manual (see §7.6).
+   **Next captures needed:**
+   - The unresolved bits didn't respond to smooth color ramps, which
+     suggests they might not be color-derived at all in the way Y/Co/Cg
+     are -- worth testing whether they depend on something else that's
+     been held constant across every capture so far, e.g. **screen
+     position** (all our solid fills are full-screen, so every 0x11
+     content block sits in the same relative position pattern).
+     Implemented: 7 pattern files (`pattern_pos_*.html`) place the same
+     rectangle -- `rgb(180,60,220)`, chosen for a distinctive, easy-to-spot
+     `Y=194 Co=216 Cg=244` -- at 7 different screen positions (four
+     corners, center, mid-left/right edges) over a `gray128` background.
+     Analysis needs `--find-by-color 180,60,220` (not the usual
+     `--known`/`--bitfield-search` path), since the rectangle only covers
+     part of the screen and would be outnumbered by the background under
+     the normal "most common header" selection -- this new mode scans for
+     blocks matching the color's known Y6/Co8/Cg7 fields regardless of
+     block count, and reports each match's position plus its still-
+     unresolved bits (tag, bits 9-10, bit 19, bit 27) directly, so no
+     further hand-analysis should be needed to see whether those bits
+     shift with `(bx,by)`.
+   - Alternatively, these could be encoder-internal bits with no
+     reconstruction meaning at all (e.g. an encoder-side confidence/mode
+     flag that doesn't affect decode) -- if the position test also comes
+     back inconclusive (bits constant regardless of position, just like
+     they were constant regardless of color), that's the next working
+     hypothesis: decode Y/Co/Cg as-is (top bits assumed 0) and check the
+     reconstructed color visually against a real capture, since a small
+     top-bit error may not even be visible.
 
    Separately, still needs test patterns with controlled *non-flat*
    content at sub-block granularity (the `pattern_stripes_fine.html` 2px-

@@ -1,0 +1,38 @@
+# One "path=R,G,B,A" per line. Lines starting with # are ignored.
+# Paths are relative to wherever you run analyze_block_headers.py from
+# (i.e. your ubwc_decoder_v2 directory) -- edit if yours differ.
+# captures/black_0000.bin and captures/white_0000.bin are intentionally
+# left in below even though the tool will flag them "low confidence" --
+# that flag (not exclusion from this file) is the correct handling: it
+# lets you still see them isolated per-capture, just keeps them out of
+# --bitfield-search by default. See analyze_block_headers.py's
+# isolate_content_headers() docstring for why.
+captures/red_0000.bin=255,0,0,255
+captures/green_0000.bin=0,255,0,255
+captures/blue_0000.bin=0,0,255,255
+captures/cyan_0000.bin=0,255,255,255
+captures/magenta_0000.bin=255,0,255,255
+captures/yellow_0000.bin=255,255,0,255
+captures/black_0000.bin=0,0,0,255
+captures/white_0000.bin=255,255,255,255
+captures/gray128_0000.bin=128,128,128,255
+captures/darkgray10_0000.bin=10,10,10,255
+captures/lightgray245_0000.bin=245,245,245,255
+captures/rgb_200_100_50_0000.bin=200,100,50,255
+captures/red160_0000.bin=160,0,0,255
+captures/red224_0000.bin=224,0,0,255
+captures/gray96_0000.bin=96,96,96,255
+captures/gray224_0000.bin=224,224,224,255
+captures/gray32_0000.bin=32,32,32,255
+captures/gray48_0000.bin=48,48,48,255
+captures/gray64_0000.bin=64,64,64,255
+captures/gray80_0000.bin=80,80,80,255
+captures/gray176_0000.bin=176,176,176,255
+captures/gray192_0000.bin=192,192,192,255
+captures/gray208_0000.bin=208,208,208,255
+captures/gsweep_00_0000.bin=100,0,100,255
+captures/gsweep_50_0000.bin=100,50,100,255
+captures/gsweep_100_0000.bin=100,100,100,255
+captures/gsweep_150_0000.bin=100,150,100,255
+captures/gsweep_200_0000.bin=100,200,100,255
+captures/gsweep_255_0000.bin=100,255,100,255
