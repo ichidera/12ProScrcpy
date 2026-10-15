@@ -364,6 +364,18 @@ void Controller::ensureRawInputDaemon()
             m_touchFlushConnected = true;
             connect(m_rawInputDaemonSession, &RawInputDaemonSession::writesFlushed, this, &Controller::flushPendingTouchMoves);
         }
+
+        // Start the aimbot proxy now that the daemon is live.
+        // aimbot.py connects to localhost:28821 and sends the same 8-byte
+        // packets; the proxy forwards them straight to m_rawInputDaemonSession.
+        if (!m_aimbotProxy) {
+            m_aimbotProxy = new AimbotProxyServer(this);
+            if (!m_aimbotProxy->start(m_rawInputDaemonSession)) {
+                qWarning() << "Controller: aimbot proxy failed to start (port 28821 in use?)";
+                delete m_aimbotProxy;
+                m_aimbotProxy = nullptr;
+            }
+        }
     }
 }
 

@@ -108,6 +108,8 @@ set(QSC_DEVICE_SOURCES
     src/device/android/keycodes.h
     src/device/controller/controller.h
     src/device/controller/controller.cpp
+    src/device/controller/aimbotproxyserver.h
+    src/device/controller/aimbotproxyserver.cpp
     src/device/controller/bufferutil.h
     src/device/controller/bufferutil.cpp
     src/device/controller/inputconvert/inputconvertbase.h

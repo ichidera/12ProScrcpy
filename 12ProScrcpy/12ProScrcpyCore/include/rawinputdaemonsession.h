@@ -43,6 +43,11 @@ public:
     // emitted from sendPacket() so flushPendingTouchMoves() stays wired.
     bool hasPendingWrites() const;
 
+    // Last frame size sent to the daemon via ensureFrameSize(). The aimbot
+    // proxy server uses this so it can forward DOWN/MOVE without having to
+    // send a redundant FRAME packet every time.
+    QSize lastSentFrameSize() const { return m_lastSentFrameSize; }
+
     static const QString &localBinaryPath();
 
     static constexpr const char *kRemoteBinaryPath = "/data/local/tmp/qtscrcpy_raw_input_daemon";

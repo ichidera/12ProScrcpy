@@ -10,6 +10,7 @@
 #include "adbsendeventsession.h"
 #include "rawinputdaemonsession.h"
 #include "inputconvertbase.h"
+#include "aimbotproxyserver.h"
 
 class QTcpSocket;
 class QTimer;
@@ -173,6 +174,11 @@ private:
     bool m_touchFlushConnected = false;     // guards connecting to writesFlushed() more than once
 
     QMap<int, PendingTouchMove> m_pendingTouchMoves;
+
+    // Aimbot proxy: localhost TCP listener that forwards packets to the
+    // daemon session. Started as soon as the daemon is confirmed up.
+    // Stopped and deleted in ~Controller via QObject parent ownership.
+    AimbotProxyServer *m_aimbotProxy = nullptr;
 };
 
 #endif // CONTROLLER_H
