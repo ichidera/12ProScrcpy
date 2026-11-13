@@ -358,13 +358,13 @@ static void map_frame_to_panel(daemon_state_t *st, int frame_x, int frame_y, int
     if (frame_is_landscape) {
         double rx270 = frame_y * (double)TOUCH_X_MAX / st->frame_height;
         double ry270 = TOUCH_Y_MAX - (frame_x * (double)TOUCH_Y_MAX / st->frame_width);
-        if (rotation == ROTATION_90) {
+        if (rotation == ROTATION_270) {
             rx = TOUCH_X_MAX - rx270;
             ry = TOUCH_Y_MAX - ry270;
         } else {
-            /* ROTATION_270, and the fallback for 0/180/unknown reported
-             * while the frame is still landscape - matches the verified
-             * formula, same fallback behaviour as the PC-side version. */
+            /* ROTATION_90, and the fallback for 0/180/unknown while the
+             * frame is still landscape - matches the verified formula,
+             * same fallback behaviour as the PC-side version. */
             rx = rx270;
             ry = ry270;
         }
