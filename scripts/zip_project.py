@@ -87,6 +87,8 @@ def is_hardcoded_excluded(rel: Path) -> bool:
         '.github',
         'docs',
         'JOURNEY.md',
+        'fbstream',
+        'ubwc_decoder_v2',
     )
     s = rel.as_posix()
     for root in excluded_roots:
